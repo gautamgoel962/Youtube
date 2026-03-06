@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Loss Surface: Epoch Loss vs Batch Loss</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            background: #0d0d1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #eee;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 4px;
+            background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { color: #888; font-size: 14px; margin-bottom: 20px; }
+        .scene-container {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%;
+            max-width: 1500px;
+        }
+        .scene-box {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 16px 16px 12px;
+            position: relative;
+        }
+        .scene-title {
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        .scene-title .tag {
+            display: inline-block;
+            font-size: 11px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .tag-smooth { background: rgba(78,205,196,0.2); color: #4ecdc4; }
+        .tag-noisy  { background: rgba(255,107,107,0.2); color: #ff6b6b; }
+        .scene-info {
+            position: absolute;
+            bottom: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            color: #666;
+            background: rgba(0,0,0,0.5);
+            padding: 3px 12px;
+            border-radius: 8px;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        canvas { display: block; border-radius: 8px; cursor: grab; }
+        canvas:active { cursor: grabbing; }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .controls label { color: #aaa; font-size: 13px; }
+        .controls input[type=range] {
+            width: 130px;
+            accent-color: #4ecdc4;
+            vertical-align: middle;
+        }
+        .controls span {
+            color: #eee;
+            font-size: 13px;
+            font-weight: 600;
+            min-width: 32px;
+            display: inline-block;
+        }
+        button {
+            background: linear-gradient(135deg, #4ecdc4, #44a8a0);
+            color: #1a1a2e;
+            border: none;
+            padding: 8px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        button:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(78,205,196,0.3); }
+        button:active { transform: scale(0.97); }
+        .legend {
+            display: flex;
+            gap: 24px;
+            margin-top: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #bbb;
+        }
+        .legend-swatch {
+            width: 28px;
+            height: 4px;
+            border-radius: 2px;
+        }
+        .explanation {
+            max-width: 720px;
+            text-align: center;
+            color: #777;
+            font-size: 13px;
+            line-height: 1.7;
+            margin-top: 16px;
+        }
+        .explanation strong { color: #bbb; }
+        .tip {
+            color: #555;
+            font-size: 12px;
+            margin-top: 8px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>3D Epoch Loss vs Batch Loss</h1>
+    <p class="subtitle">Why batch training produces a noisy (jittery) loss surface</p>
+
+    <div class="scene-container">
+        <div class="scene-box">
+            <div class="scene-title">Epoch Loss Surface <span class="tag tag-smooth">Smooth</span></div>
+            <canvas id="epochCanvas" width="660" height="480"></canvas>
+            <div class="scene-info" id="epochInfo">Epoch 0 / 100</div>
+        </div>
+        <div class="scene-box">
+            <div class="scene-title">Batch Loss Surface <span class="tag tag-noisy">Jittery</span></div>
+            <canvas id="batchCanvas" width="660" height="480"></canvas>
+            <div class="scene-info" id="batchInfo">Batch 0 / 800</div>
+        </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#4ecdc4;"></div> Epoch loss surface (smooth)</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#ff6b6b;"></div> Batch loss surface (jittery)</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:rgba(255,217,61,0.7); height:2px;"></div> Animated progress line</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label>Jitter: </label>
+            <input type="range" id="jitterSlider" min="0" max="100" value="40">
+            <span id="jitterVal">0.40</span>
+        </div>
+        <div>
+            <label>Learning Rate: </label>
+            <input type="range" id="lrSlider" min="1" max="100" value="35">
+            <span id="lrVal">0.035</span>
+        </div>
+        <div>
+            <label>Speed: </label>
+            <input type="range" id="speedSlider" min="1" max="10" value="3">
+            <span id="speedVal">3</span>
+        </div>
+        <button id="resetBtn">Reset</button>
+    </div>
+
+    <p class="tip">Click &amp; drag to rotate &bull; Scroll to zoom &bull; Right-click to pan</p>
+
+    <p class="explanation">
+        <strong>Epoch loss</strong> averages over the entire dataset each epoch, producing a smooth surface.<br>
+        <strong>Batch loss</strong> is computed per mini-batch &mdash; each batch samples different data,
+        so gradients vary, creating the jagged 3D surface with visible noise ridges.
+        The extra Z-axis represents a <strong>parameter dimension</strong>, showing how loss varies across parameter space.
+    </p>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+    }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const TOTAL_EPOCHS = 100;
+const BATCHES_PER_EPOCH = 8;
+const GRID_Z = 40;
+const MAX_FRAMES = TOTAL_EPOCHS * BATCHES_PER_EPOCH;
+
+const jitterSlider = document.getElementById('jitterSlider');
+const lrSlider = document.getElementById('lrSlider');
+const speedSlider = document.getElementById('speedSlider');
+const jitterVal = document.getElementById('jitterVal');
+const lrVal = document.getElementById('lrVal');
+const speedVal = document.getElementById('speedVal');
+const resetBtn = document.getElementById('resetBtn');
+const epochInfo = document.getElementById('epochInfo');
+const batchInfo = document.getElementById('batchInfo');
+
+let animFrame = 0;
+let epochSurfaceData = [];
+let batchSurfaceData = [];
+let trendLine = [];
+
+function seededRandom(seed) {
+    let s = seed;
+    return function() {
+        s = (s * 16807 + 0) % 2147483647;
+        return (s - 1) / 2147483646;
+    };
+}
+
+function generateTrend(lr) {
+    const trend = [];
+    const startLoss = 3.2;
+    const endLoss = 0.15 + (1 - lr) * 0.3;
+    for (let i = 0; i <= MAX_FRAMES; i++) {
+        const t = i / MAX_FRAMES;
+        trend.push(endLoss + startLoss * Math.exp(-4.5 * lr * 30 * t));
+    }
+    return trend;
+}
+
+function generateSurfaceData() {
+    const lr = lrSlider.value / 1000;
+    const jitter = jitterSlider.value / 100;
+    trendLine = generateTrend(lr);
+    const rng = seededRandom(42);
+
+    const epochGrid = [];
+    const gridX = TOTAL_EPOCHS + 1;
+    for (let ix = 0; ix < gridX; ix++) {
+        const row = [];
+        const base = trendLine[ix * BATCHES_PER_EPOCH];
+        for (let iz = 0; iz < GRID_Z; iz++) {
+            const zNorm = (iz / (GRID_Z - 1)) * 2 - 1;
+            const bowl = 0.4 * zNorm * zNorm * (base / trendLine[0]);
+            const smallNoise = (rng() - 0.5) * 0.03;
+            row.push(base + bowl + smallNoise);
+        }
+        epochGrid.push(row);
+    }
+    epochSurfaceData = epochGrid;
+
+    const batchGrid = [];
+    const batchGridX = MAX_FRAMES + 1;
+    const rng2 = seededRandom(137);
+    for (let ix = 0; ix < batchGridX; ix++) {
+        const row = [];
+        const base = trendLine[ix];
+        const noiseAmp = jitter * (0.3 + 0.7 * base / trendLine[0]);
+        for (let iz = 0; iz < GRID_Z; iz++) {
+            const zNorm = (iz / (GRID_Z - 1)) * 2 - 1;
+            const bowl = 0.4 * zNorm * zNorm * (base / trendLine[0]);
+            const batchNoise = (rng2() - 0.5) * 2 * noiseAmp;
+            const zNoise = (rng2() - 0.5) * noiseAmp * 0.5;
+            row.push(base + bowl + batchNoise + zNoise);
+        }
+        batchGrid.push(row);
+    }
+    batchSurfaceData = batchGrid;
+}
+
+function createScene(canvasId, bgColor) {
+    const canvas = document.getElementById(canvasId);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setSize(canvas.width, canvas.height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(bgColor, 1);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(bgColor, 0.015);
+
+    const camera = new THREE.PerspectiveCamera(45, canvas.width / canvas.height, 0.1, 200);
+    camera.position.set(12, 10, 14);
+
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 1.5, 0);
+    controls.minDistance = 5;
+    controls.maxDistance = 40;
+    controls.update();
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(8, 12, 6);
+    scene.add(dirLight);
+    const dirLight2 = new THREE.DirectionalLight(0x8888ff, 0.3);
+    dirLight2.position.set(-6, 8, -4);
+    scene.add(dirLight2);
+
+    return { renderer, scene, camera, controls };
+}
+
+function buildGridHelper(scene) {
+    const gridSize = 12;
+    const gridDiv = 12;
+    const grid = new THREE.GridHelper(gridSize, gridDiv, 0x333355, 0x222244);
+    grid.position.y = 0;
+    scene.add(grid);
+}
+
+function buildAxisLabels(scene) {
+    const makeLabel = (text, position, color) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.font = 'bold 28px Segoe UI, sans-serif';
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 128, 32);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+        const sprite = new THREE.Sprite(mat);
+        sprite.position.copy(position);
+        sprite.scale.set(3, 0.75, 1);
+        scene.add(sprite);
+        return sprite;
+    };
+
+    makeLabel('Iteration', new THREE.Vector3(0, -0.6, -7.5), '#888888');
+    makeLabel('Loss', new THREE.Vector3(-7.5, 3.5, 0), '#888888');
+    makeLabel('Parameter', new THREE.Vector3(7.5, -0.6, 0), '#888888');
+}
+
+function buildSurfaceMesh(surfaceData, currentMaxX, totalX, color, opacity) {
+    const maxX = Math.min(currentMaxX + 1, surfaceData.length);
+    if (maxX < 2) return null;
+
+    const gridX = maxX;
+    const gridZ = GRID_Z;
+    const scaleX = 12;
+    const scaleY = 6;
+    const scaleZ = 6;
+    const maxLoss = 3.8;
+
+    const geometry = new THREE.BufferGeometry();
+    const vertices = [];
+    const colors = [];
+    const indices = [];
+
+    const col = new THREE.Color(color);
+
+    for (let ix = 0; ix < gridX; ix++) {
+        for (let iz = 0; iz < gridZ; iz++) {
+            const xNorm = ix / (totalX);
+            const zNorm = iz / (gridZ - 1);
+            const loss = surfaceData[ix][iz];
+            const yNorm = Math.max(0, Math.min(loss / maxLoss, 1));
+
+            const px = (xNorm - 0.5) * scaleX;
+            const py = yNorm * scaleY;
+            const pz = (zNorm - 0.5) * scaleZ;
+
+            vertices.push(px, py, pz);
+
+            const heightFactor = yNorm;
+            const r = col.r * (0.4 + 0.6 * heightFactor);
+            const g = col.g * (0.4 + 0.6 * heightFactor);
+            const b = col.b * (0.4 + 0.6 * heightFactor);
+            colors.push(r, g, b);
+        }
+    }
+
+    for (let ix = 0; ix < gridX - 1; ix++) {
+        for (let iz = 0; iz < gridZ - 1; iz++) {
+            const a = ix * gridZ + iz;
+            const b = a + 1;
+            const c = (ix + 1) * gridZ + iz;
+            const d = c + 1;
+            indices.push(a, c, b);
+            indices.push(b, c, d);
+        }
+    }
+
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshPhongMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: opacity,
+        shininess: 40,
+        specular: 0x222222,
+    });
+
+    return new THREE.Mesh(geometry, material);
+}
+
+function buildWireframeMesh(surfaceData, currentMaxX, totalX, color) {
+    const maxX = Math.min(currentMaxX + 1, surfaceData.length);
+    if (maxX < 2) return null;
+
+    const gridX = maxX;
+    const gridZ = GRID_Z;
+    const scaleX = 12;
+    const scaleY = 6;
+    const scaleZ = 6;
+    const maxLoss = 3.8;
+
+    const points = [];
+
+    for (let ix = 0; ix < gridX; ix += 2) {
+        for (let iz = 0; iz < gridZ; iz++) {
+            const xNorm = ix / totalX;
+            const zNorm = iz / (gridZ - 1);
+            const loss = surfaceData[ix][iz];
+            const yNorm = Math.max(0, Math.min(loss / maxLoss, 1));
+            points.push(new THREE.Vector3(
+                (xNorm - 0.5) * scaleX,
+                yNorm * scaleY,
+                (zNorm - 0.5) * scaleZ
+            ));
+        }
+        points.push(null);
+    }
+
+    for (let iz = 0; iz < gridZ; iz += 2) {
+        for (let ix = 0; ix < gridX; ix++) {
+            const xNorm = ix / totalX;
+            const zNorm = iz / (gridZ - 1);
+            const loss = surfaceData[ix][iz];
+            const yNorm = Math.max(0, Math.min(loss / maxLoss, 1));
+            points.push(new THREE.Vector3(
+                (xNorm - 0.5) * scaleX,
+                yNorm * scaleY,
+                (zNorm - 0.5) * scaleZ
+            ));
+        }
+        points.push(null);
+    }
+
+    const segments = [];
+    for (let i = 0; i < points.length - 1; i++) {
+        if (points[i] && points[i + 1]) {
+            segments.push(points[i], points[i + 1]);
+        }
+    }
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(segments);
+    const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.25 });
+    return new THREE.LineSegments(geometry, material);
+}
+
+function buildProgressLine(surfaceData, currentMaxX, totalX, color) {
+    const maxX = Math.min(currentMaxX, surfaceData.length - 1);
+    if (maxX < 1) return null;
+
+    const scaleX = 12;
+    const scaleY = 6;
+    const scaleZ = 6;
+    const maxLoss = 3.8;
+    const midZ = Math.floor(GRID_Z / 2);
+
+    const points = [];
+    for (let ix = 0; ix <= maxX; ix++) {
+        const xNorm = ix / totalX;
+        const loss = surfaceData[ix][midZ];
+        const yNorm = Math.max(0, Math.min(loss / maxLoss, 1));
+        const zNorm = midZ / (GRID_Z - 1);
+        points.push(new THREE.Vector3(
+            (xNorm - 0.5) * scaleX,
+            yNorm * scaleY + 0.02,
+            (zNorm - 0.5) * scaleZ
+        ));
+    }
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+    return new THREE.Line(geometry, material);
+}
+
+function buildProgressBall(surfaceData, currentMaxX, totalX, color) {
+    const idx = Math.min(currentMaxX, surfaceData.length - 1);
+    if (idx < 0) return null;
+
+    const scaleX = 12;
+    const scaleY = 6;
+    const scaleZ = 6;
+    const maxLoss = 3.8;
+    const midZ = Math.floor(GRID_Z / 2);
+
+    const xNorm = idx / totalX;
+    const loss = surfaceData[idx][midZ];
+    const yNorm = Math.max(0, Math.min(loss / maxLoss, 1));
+    const zNorm = midZ / (GRID_Z - 1);
+
+    const geo = new THREE.SphereGeometry(0.12, 16, 16);
+    const mat = new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.6,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(
+        (xNorm - 0.5) * scaleX,
+        yNorm * scaleY + 0.02,
+        (zNorm - 0.5) * scaleZ
+    );
+    return mesh;
+}
+
+const epoch3D = createScene('epochCanvas', 0x0d0d1a);
+const batch3D = createScene('batchCanvas', 0x0d0d1a);
+
+buildGridHelper(epoch3D.scene);
+buildGridHelper(batch3D.scene);
+buildAxisLabels(epoch3D.scene);
+buildAxisLabels(batch3D.scene);
+
+let epochMeshGroup = new THREE.Group();
+let batchMeshGroup = new THREE.Group();
+epoch3D.scene.add(epochMeshGroup);
+batch3D.scene.add(batchMeshGroup);
+
+function rebuildEpochScene() {
+    epoch3D.scene.remove(epochMeshGroup);
+    epochMeshGroup = new THREE.Group();
+
+    const currentEpoch = Math.min(Math.floor(animFrame / BATCHES_PER_EPOCH), TOTAL_EPOCHS);
+
+    const surface = buildSurfaceMesh(epochSurfaceData, currentEpoch, TOTAL_EPOCHS, '#4ecdc4', 0.85);
+    if (surface) epochMeshGroup.add(surface);
+
+    const wire = buildWireframeMesh(epochSurfaceData, currentEpoch, TOTAL_EPOCHS, 0x4ecdc4);
+    if (wire) epochMeshGroup.add(wire);
+
+    const line = buildProgressLine(epochSurfaceData, currentEpoch, TOTAL_EPOCHS, 0xffd93d);
+    if (line) epochMeshGroup.add(line);
+
+    const ball = buildProgressBall(epochSurfaceData, currentEpoch, TOTAL_EPOCHS, 0xffd93d);
+    if (ball) epochMeshGroup.add(ball);
+
+    epoch3D.scene.add(epochMeshGroup);
+    epochInfo.textContent = `Epoch ${currentEpoch} / ${TOTAL_EPOCHS}`;
+}
+
+function rebuildBatchScene() {
+    batch3D.scene.remove(batchMeshGroup);
+    batchMeshGroup = new THREE.Group();
+
+    const currentBatch = Math.min(animFrame, MAX_FRAMES);
+    const step = Math.max(1, Math.floor(MAX_FRAMES / 200));
+    const downsampledIdx = Math.min(Math.floor(currentBatch / step), Math.floor(MAX_FRAMES / step));
+
+    const downsampled = [];
+    for (let i = 0; i <= Math.min(downsampledIdx * step, MAX_FRAMES); i += step) {
+        downsampled.push(batchSurfaceData[i]);
+    }
+    if (downsampled.length < 2) {
+        batch3D.scene.add(batchMeshGroup);
+        batchInfo.textContent = `Batch ${currentBatch} / ${MAX_FRAMES}`;
+        return;
+    }
+
+    const surface = buildSurfaceMesh(downsampled, downsampled.length - 1, downsampled.length - 1, '#ff6b6b', 0.85);
+    if (surface) batchMeshGroup.add(surface);
+
+    const wire = buildWireframeMesh(downsampled, downsampled.length - 1, downsampled.length - 1, 0xff6b6b);
+    if (wire) batchMeshGroup.add(wire);
+
+    const lineData = [];
+    const midZ = Math.floor(GRID_Z / 2);
+    for (let i = 0; i <= currentBatch && i < batchSurfaceData.length; i += step) {
+        lineData.push(batchSurfaceData[i]);
+    }
+    if (lineData.length > 1) {
+        const line = buildProgressLine(lineData, lineData.length - 1, lineData.length - 1, 0xffd93d);
+        if (line) batchMeshGroup.add(line);
+    }
+
+    const ballIdx = Math.min(currentBatch, batchSurfaceData.length - 1);
+    const ballData = [batchSurfaceData[ballIdx]];
+    const ball = buildProgressBall(ballData, 0, 1, 0xffd93d);
+    if (ball) {
+        const xNorm = currentBatch / MAX_FRAMES;
+        ball.position.x = (xNorm - 0.5) * 12;
+        batchMeshGroup.add(ball);
+    }
+
+    batch3D.scene.add(batchMeshGroup);
+    batchInfo.textContent = `Batch ${currentBatch} / ${MAX_FRAMES}`;
+}
+
+let lastRebuildFrame = -999;
+
+function animate() {
+    const speed = parseInt(speedSlider.value);
+    animFrame += speed;
+    if (animFrame > MAX_FRAMES) animFrame = MAX_FRAMES;
+
+    if (animFrame - lastRebuildFrame >= speed) {
+        rebuildEpochScene();
+        rebuildBatchScene();
+        lastRebuildFrame = animFrame;
+    }
+
+    epoch3D.controls.update();
+    batch3D.controls.update();
+    epoch3D.renderer.render(epoch3D.scene, epoch3D.camera);
+    batch3D.renderer.render(batch3D.scene, batch3D.camera);
+
+    if (animFrame < MAX_FRAMES) {
+        requestAnimationFrame(animate);
+    }
+}
+
+function reset() {
+    animFrame = 0;
+    lastRebuildFrame = -999;
+    generateSurfaceData();
+    rebuildEpochScene();
+    rebuildBatchScene();
+    epoch3D.renderer.render(epoch3D.scene, epoch3D.camera);
+    batch3D.renderer.render(batch3D.scene, batch3D.camera);
+    requestAnimationFrame(animate);
+}
+
+jitterSlider.addEventListener('input', () => {
+    jitterVal.textContent = (jitterSlider.value / 100).toFixed(2);
+    reset();
+});
+lrSlider.addEventListener('input', () => {
+    lrVal.textContent = (lrSlider.value / 1000).toFixed(3);
+    reset();
+});
+speedSlider.addEventListener('input', () => {
+    speedVal.textContent = speedSlider.value;
+});
+resetBtn.addEventListener('click', reset);
+
+generateSurfaceData();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

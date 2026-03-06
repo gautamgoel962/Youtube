@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loss Curve: Epoch Loss vs Batch Loss (with Jitter)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #eee;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 26px;
+            margin-bottom: 4px;
+            background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { color: #888; font-size: 14px; margin-bottom: 24px; }
+        .chart-container {
+            display: flex;
+            gap: 40px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%;
+            max-width: 1400px;
+        }
+        .chart-box {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 24px 28px 20px;
+            position: relative;
+        }
+        .chart-title {
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        .chart-title .tag {
+            display: inline-block;
+            font-size: 11px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .tag-smooth { background: rgba(78,205,196,0.2); color: #4ecdc4; }
+        .tag-noisy  { background: rgba(255,107,107,0.2); color: #ff6b6b; }
+        canvas { display: block; border-radius: 8px; }
+
+        .controls {
+            margin-top: 24px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .controls label { color: #aaa; font-size: 13px; }
+        .controls input[type=range] {
+            width: 140px;
+            accent-color: #4ecdc4;
+            vertical-align: middle;
+        }
+        .controls span { color: #eee; font-size: 13px; font-weight: 600; min-width: 32px; display: inline-block; }
+        button {
+            background: linear-gradient(135deg, #4ecdc4, #44a8a0);
+            color: #1a1a2e;
+            border: none;
+            padding: 8px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        button:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(78,205,196,0.3); }
+        button:active { transform: scale(0.97); }
+        .legend {
+            display: flex;
+            gap: 24px;
+            margin-top: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #bbb;
+        }
+        .legend-swatch {
+            width: 28px;
+            height: 4px;
+            border-radius: 2px;
+        }
+        .explanation {
+            max-width: 720px;
+            text-align: center;
+            color: #777;
+            font-size: 13px;
+            line-height: 1.7;
+            margin-top: 20px;
+        }
+        .explanation strong { color: #bbb; }
+    </style>
+</head>
+<body>
+    <h1>Epoch Loss vs Batch Loss</h1>
+    <p class="subtitle">Why batch training produces a noisy (jittery) loss curve</p>
+
+    <div class="chart-container">
+        <div class="chart-box">
+            <div class="chart-title">Epoch Loss <span class="tag tag-smooth">Smooth</span></div>
+            <canvas id="epochCanvas" width="580" height="380"></canvas>
+        </div>
+        <div class="chart-box">
+            <div class="chart-title">Batch Loss <span class="tag tag-noisy">Jittery</span></div>
+            <canvas id="batchCanvas" width="580" height="380"></canvas>
+        </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:#4ecdc4;"></div> Epoch loss (full dataset avg)</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#ff6b6b;"></div> Batch loss (per mini-batch)</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:rgba(255,217,61,0.7); height:2px;"></div> Underlying trend</div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <label>Jitter Intensity: </label>
+            <input type="range" id="jitterSlider" min="0" max="100" value="40">
+            <span id="jitterVal">0.40</span>
+        </div>
+        <div>
+            <label>Learning Rate: </label>
+            <input type="range" id="lrSlider" min="1" max="100" value="35">
+            <span id="lrVal">0.035</span>
+        </div>
+        <div>
+            <label>Speed: </label>
+            <input type="range" id="speedSlider" min="1" max="10" value="3">
+            <span id="speedVal">3</span>
+        </div>
+        <button id="resetBtn">Reset</button>
+    </div>
+
+    <p class="explanation">
+        <strong>Epoch loss</strong> averages over the entire dataset each epoch, producing a smooth curve.<br>
+        <strong>Batch loss</strong> is computed per mini-batch &mdash; each batch samples different data,
+        so gradients vary, causing the characteristic <strong>jitter/noise</strong> around the trend.
+        Higher jitter = smaller batch size or noisier data.
+    </p>
+
+<script>
+const epochCanvas = document.getElementById('epochCanvas');
+const batchCanvas = document.getElementById('batchCanvas');
+const epochCtx = epochCanvas.getContext('2d');
+const batchCtx = batchCanvas.getContext('2d');
+const jitterSlider = document.getElementById('jitterSlider');
+const lrSlider = document.getElementById('lrSlider');
+const speedSlider = document.getElementById('speedSlider');
+const jitterVal = document.getElementById('jitterVal');
+const lrVal = document.getElementById('lrVal');
+const speedVal = document.getElementById('speedVal');
+const resetBtn = document.getElementById('resetBtn');
+
+const W = epochCanvas.width;
+const H = epochCanvas.height;
+const PAD = { top: 20, right: 20, bottom: 44, left: 58 };
+const PLOT_W = W - PAD.left - PAD.right;
+const PLOT_H = H - PAD.top - PAD.bottom;
+const TOTAL_EPOCHS = 100;
+const BATCHES_PER_EPOCH = 8;
+
+let epochData = [];
+let batchData = [];
+let trendData = [];
+let animFrame = 0;
+let maxFrames = TOTAL_EPOCHS * BATCHES_PER_EPOCH;
+let rafId = null;
+
+function generateTrend(lr) {
+    const trend = [];
+    const startLoss = 3.2;
+    const endLoss = 0.15 + (1 - lr) * 0.3;
+    for (let i = 0; i <= maxFrames; i++) {
+        const t = i / maxFrames;
+        const decay = startLoss * Math.exp(-4.5 * lr * 30 * t);
+        const base = endLoss + decay;
+        trend.push(base);
+    }
+    return trend;
+}
+
+function generateData() {
+    const lr = lrSlider.value / 1000;
+    const jitter = jitterSlider.value / 100;
+    trendData = generateTrend(lr);
+    epochData = [];
+    batchData = [];
+
+    for (let i = 0; i <= maxFrames; i++) {
+        const base = trendData[i];
+        const noiseAmplitude = jitter * (0.3 + 0.7 * trendData[i] / trendData[0]);
+        const batchNoise = (Math.random() - 0.5) * 2 * noiseAmplitude;
+        batchData.push(base + batchNoise);
+
+        if (i % BATCHES_PER_EPOCH === 0) {
+            const epochIdx = i / BATCHES_PER_EPOCH;
+            let epochLoss = base;
+            const smallNoise = (Math.random() - 0.5) * 0.02;
+            epochData.push(epochLoss + smallNoise);
+        }
+    }
+}
+
+function drawAxes(ctx, xLabel, yLabel, maxX) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+
+    const gridCountY = 6;
+    const gridCountX = 5;
+    ctx.setLineDash([4, 4]);
+    for (let i = 0; i <= gridCountY; i++) {
+        const y = PAD.top + (i / gridCountY) * PLOT_H;
+        ctx.beginPath();
+        ctx.moveTo(PAD.left, y);
+        ctx.lineTo(W - PAD.right, y);
+        ctx.stroke();
+    }
+    for (let i = 0; i <= gridCountX; i++) {
+        const x = PAD.left + (i / gridCountX) * PLOT_W;
+        ctx.beginPath();
+        ctx.moveTo(x, PAD.top);
+        ctx.lineTo(x, H - PAD.bottom);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, PAD.top);
+    ctx.lineTo(PAD.left, H - PAD.bottom);
+    ctx.lineTo(W - PAD.right, H - PAD.bottom);
+    ctx.stroke();
+
+    ctx.fillStyle = '#888';
+    ctx.font = '11px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    for (let i = 0; i <= gridCountX; i++) {
+        const x = PAD.left + (i / gridCountX) * PLOT_W;
+        const val = Math.round((i / gridCountX) * maxX);
+        ctx.fillText(val, x, H - PAD.bottom + 18);
+    }
+    ctx.textAlign = 'right';
+    const maxLoss = 3.5;
+    for (let i = 0; i <= gridCountY; i++) {
+        const y = PAD.top + (i / gridCountY) * PLOT_H;
+        const val = (maxLoss * (1 - i / gridCountY)).toFixed(1);
+        ctx.fillText(val, PAD.left - 8, y + 4);
+    }
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '12px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(xLabel, PAD.left + PLOT_W / 2, H - 4);
+
+    ctx.save();
+    ctx.translate(14, PAD.top + PLOT_H / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.restore();
+}
+
+function toCanvasX(idx, total) {
+    return PAD.left + (idx / total) * PLOT_W;
+}
+
+function toCanvasY(val) {
+    const maxLoss = 3.5;
+    const clamped = Math.max(0, Math.min(val, maxLoss));
+    return PAD.top + (1 - clamped / maxLoss) * PLOT_H;
+}
+
+function drawCurve(ctx, data, maxIdx, total, color, width, shadow) {
+    if (maxIdx < 1) return;
+    ctx.save();
+    ctx.beginPath();
+
+    ctx.rect(PAD.left, PAD.top, PLOT_W, PLOT_H);
+    ctx.clip();
+
+    if (shadow) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 8;
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(toCanvasX(0, total), toCanvasY(data[0]));
+    for (let i = 1; i <= maxIdx && i < data.length; i++) {
+        ctx.lineTo(toCanvasX(i, total), toCanvasY(data[i]));
+    }
+    ctx.stroke();
+    ctx.restore();
+}
+
+function drawDot(ctx, x, y, color, radius) {
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawLossLabel(ctx, val, x, y, color) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    const text = 'Loss: ' + val.toFixed(3);
+    ctx.font = 'bold 12px Segoe UI, sans-serif';
+    const tw = ctx.measureText(text).width;
+    const bx = Math.min(x + 10, W - PAD.right - tw - 16);
+    const by = Math.max(y - 24, PAD.top + 4);
+    ctx.fillRect(bx - 4, by - 12, tw + 12, 20);
+    ctx.fillStyle = color;
+    ctx.fillText(text, bx + 2, by + 2);
+    ctx.restore();
+}
+
+function drawGradientFill(ctx, data, maxIdx, total, color) {
+    if (maxIdx < 1) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PAD.left, PAD.top, PLOT_W, PLOT_H);
+    ctx.clip();
+
+    const grad = ctx.createLinearGradient(0, PAD.top, 0, H - PAD.bottom);
+    grad.addColorStop(0, color.replace(')', ',0.12)').replace('rgb', 'rgba'));
+    grad.addColorStop(1, color.replace(')', ',0.0)').replace('rgb', 'rgba'));
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(toCanvasX(0, total), toCanvasY(data[0]));
+    for (let i = 1; i <= maxIdx && i < data.length; i++) {
+        ctx.lineTo(toCanvasX(i, total), toCanvasY(data[i]));
+    }
+    ctx.lineTo(toCanvasX(Math.min(maxIdx, data.length - 1), total), H - PAD.bottom);
+    ctx.lineTo(toCanvasX(0, total), H - PAD.bottom);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+}
+
+function renderEpochChart() {
+    epochCtx.clearRect(0, 0, W, H);
+    drawAxes(epochCtx, 'Epoch', 'Loss', TOTAL_EPOCHS);
+
+    const currentEpoch = Math.min(Math.floor(animFrame / BATCHES_PER_EPOCH), epochData.length - 1);
+
+    drawGradientFill(epochCtx, epochData, currentEpoch, TOTAL_EPOCHS, 'rgb(78,205,196)');
+
+    const trendEpoch = [];
+    for (let i = 0; i <= TOTAL_EPOCHS; i++) {
+        trendEpoch.push(trendData[i * BATCHES_PER_EPOCH]);
+    }
+    drawCurve(epochCtx, trendEpoch, currentEpoch, TOTAL_EPOCHS, 'rgba(255,217,61,0.4)', 1.5, false);
+
+    drawCurve(epochCtx, epochData, currentEpoch, TOTAL_EPOCHS, '#4ecdc4', 2.5, true);
+
+    if (currentEpoch > 0 && currentEpoch < epochData.length) {
+        const cx = toCanvasX(currentEpoch, TOTAL_EPOCHS);
+        const cy = toCanvasY(epochData[currentEpoch]);
+        drawDot(epochCtx, cx, cy, '#4ecdc4', 5);
+        drawLossLabel(epochCtx, epochData[currentEpoch], cx, cy, '#4ecdc4');
+    }
+
+    epochCtx.fillStyle = '#555';
+    epochCtx.font = '11px Segoe UI, sans-serif';
+    epochCtx.textAlign = 'right';
+    epochCtx.fillText('Epoch ' + currentEpoch + '/' + TOTAL_EPOCHS, W - PAD.right, PAD.top - 6);
+}
+
+function renderBatchChart() {
+    batchCtx.clearRect(0, 0, W, H);
+    const totalBatches = TOTAL_EPOCHS * BATCHES_PER_EPOCH;
+    drawAxes(batchCtx, 'Batch Iteration', 'Loss', totalBatches);
+
+    const currentBatch = Math.min(animFrame, batchData.length - 1);
+
+    drawGradientFill(batchCtx, batchData, currentBatch, totalBatches, 'rgb(255,107,107)');
+
+    drawCurve(batchCtx, trendData, currentBatch, totalBatches, 'rgba(255,217,61,0.4)', 1.5, false);
+
+    drawCurve(batchCtx, batchData, currentBatch, totalBatches, '#ff6b6b', 1.8, true);
+
+    if (currentBatch > 0 && currentBatch < batchData.length) {
+        const cx = toCanvasX(currentBatch, totalBatches);
+        const cy = toCanvasY(batchData[currentBatch]);
+        drawDot(batchCtx, cx, cy, '#ff6b6b', 4);
+        drawLossLabel(batchCtx, batchData[currentBatch], cx, cy, '#ff6b6b');
+    }
+
+    batchCtx.fillStyle = '#555';
+    batchCtx.font = '11px Segoe UI, sans-serif';
+    batchCtx.textAlign = 'right';
+    batchCtx.fillText('Batch ' + currentBatch + '/' + totalBatches, W - PAD.right, PAD.top - 6);
+}
+
+function animate() {
+    const speed = parseInt(speedSlider.value);
+    animFrame += speed;
+    if (animFrame > maxFrames) animFrame = maxFrames;
+
+    renderEpochChart();
+    renderBatchChart();
+
+    if (animFrame < maxFrames) {
+        rafId = requestAnimationFrame(animate);
+    }
+}
+
+function reset() {
+    cancelAnimationFrame(rafId);
+    animFrame = 0;
+    generateData();
+    renderEpochChart();
+    renderBatchChart();
+    rafId = requestAnimationFrame(animate);
+}
+
+jitterSlider.addEventListener('input', () => {
+    jitterVal.textContent = (jitterSlider.value / 100).toFixed(2);
+    reset();
+});
+lrSlider.addEventListener('input', () => {
+    lrVal.textContent = (lrSlider.value / 1000).toFixed(3);
+    reset();
+});
+speedSlider.addEventListener('input', () => {
+    speedVal.textContent = speedSlider.value;
+});
+resetBtn.addEventListener('click', reset);
+
+generateData();
+rafId = requestAnimationFrame(animate);
+</script>
+</body>
+</html>
