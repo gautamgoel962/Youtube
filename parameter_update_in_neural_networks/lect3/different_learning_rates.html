@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Effect of Different Learning Rates on Training Loss</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #eee;
+            padding: 20px;
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 4px;
+            background: linear-gradient(90deg, #ff6b6b, #ffa500, #4d96ff, #2ecc40);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { color: #888; font-size: 14px; margin-bottom: 24px; }
+        .chart-box {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 24px 28px 20px;
+            position: relative;
+        }
+        canvas { display: block; border-radius: 8px; }
+
+        .legend {
+            display: flex;
+            gap: 28px;
+            margin-top: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+        .legend-item:hover { background: rgba(255,255,255,0.06); }
+        .legend-item.dimmed { opacity: 0.3; }
+        .legend-swatch {
+            width: 32px;
+            height: 5px;
+            border-radius: 3px;
+        }
+
+        .controls {
+            margin-top: 24px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .controls label { color: #aaa; font-size: 13px; }
+        .controls input[type=range] {
+            width: 140px;
+            accent-color: #4ecdc4;
+            vertical-align: middle;
+        }
+        .controls span { color: #eee; font-size: 13px; font-weight: 600; min-width: 32px; display: inline-block; }
+        button {
+            background: linear-gradient(135deg, #4ecdc4, #44a8a0);
+            color: #1a1a2e;
+            border: none;
+            padding: 8px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        button:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(78,205,196,0.3); }
+        button:active { transform: scale(0.97); }
+
+        .explanation {
+            max-width: 760px;
+            text-align: center;
+            color: #777;
+            font-size: 13px;
+            line-height: 1.7;
+            margin-top: 20px;
+        }
+        .explanation strong { color: #bbb; }
+
+        .tooltip {
+            position: absolute;
+            pointer-events: none;
+            background: rgba(0,0,0,0.75);
+            color: #eee;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+            display: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <h1>Effect of Different Learning Rates</h1>
+    <p class="subtitle">How learning rate choice impacts training convergence</p>
+
+    <div class="chart-box" style="position: relative;">
+        <canvas id="mainCanvas" width="860" height="520"></canvas>
+        <div class="tooltip" id="tooltip"></div>
+    </div>
+
+    <div class="legend" id="legendContainer"></div>
+
+    <div class="controls">
+        <div>
+            <label>Speed: </label>
+            <input type="range" id="speedSlider" min="1" max="10" value="3">
+            <span id="speedVal">3</span>
+        </div>
+        <button id="resetBtn">Replay</button>
+        <button id="loopBtn" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">Loop ⟳</button>
+    </div>
+
+    <p class="explanation">
+        A <strong style="color:#2ecc40;">good learning rate</strong> converges smoothly to low loss.
+        A <strong style="color:#4d96ff;">high learning rate</strong> drops fast but plateaus early &mdash; it overshoots the optimum.
+        A <strong style="color:#ffa500;">low learning rate</strong> makes steady but very slow progress.
+        A <strong style="color:#ff3333;">very high learning rate</strong> diverges &mdash; loss explodes because steps are too large.
+    </p>
+
+<script>
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+const speedSlider = document.getElementById('speedSlider');
+const speedVal = document.getElementById('speedVal');
+const resetBtn = document.getElementById('resetBtn');
+const loopBtn = document.getElementById('loopBtn');
+const legendContainer = document.getElementById('legendContainer');
+
+const W = canvas.width;
+const H = canvas.height;
+const PAD = { top: 36, right: 40, bottom: 56, left: 68 };
+const PLOT_W = W - PAD.left - PAD.right;
+const PLOT_H = H - PAD.top - PAD.bottom;
+const TOTAL_STEPS = 300;
+const MAX_LOSS = 4.0;
+const START_LOSS = 3.2;
+
+const curves = [
+    {
+        name: 'very high learning rate',
+        color: '#ff3333',
+        visible: true,
+        data: [],
+        generate() {
+            const d = [];
+            for (let i = 0; i <= TOTAL_STEPS; i++) {
+                const t = i / TOTAL_STEPS;
+                const dip = START_LOSS * Math.exp(-8 * t);
+                const rise = 3.8 * (1 - Math.exp(-3 * t));
+                const val = Math.min(START_LOSS - dip + rise + 0.3, MAX_LOSS);
+                d.push(i < 5 ? START_LOSS - i * 0.15 : val);
+            }
+            this.data = d;
+        }
+    },
+    {
+        name: 'low learning rate',
+        color: '#ffa500',
+        visible: true,
+        data: [],
+        generate() {
+            const d = [];
+            for (let i = 0; i <= TOTAL_STEPS; i++) {
+                const t = i / TOTAL_STEPS;
+                const val = START_LOSS * Math.exp(-0.7 * t) + 0.08;
+                d.push(val);
+            }
+            this.data = d;
+        }
+    },
+    {
+        name: 'high learning rate',
+        color: '#4d96ff',
+        visible: true,
+        data: [],
+        generate() {
+            const d = [];
+            for (let i = 0; i <= TOTAL_STEPS; i++) {
+                const t = i / TOTAL_STEPS;
+                const fastDrop = START_LOSS * Math.exp(-6 * t);
+                const plateau = 0.9 * (1 - Math.exp(-2.5 * t));
+                const val = fastDrop + plateau + 0.15;
+                d.push(val);
+            }
+            this.data = d;
+        }
+    },
+    {
+        name: 'good learning rate',
+        color: '#2ecc40',
+        visible: true,
+        data: [],
+        generate() {
+            const d = [];
+            for (let i = 0; i <= TOTAL_STEPS; i++) {
+                const t = i / TOTAL_STEPS;
+                const val = START_LOSS * Math.exp(-4.5 * t) + 0.05;
+                d.push(val);
+            }
+            this.data = d;
+        }
+    }
+];
+
+function buildLegend() {
+    legendContainer.innerHTML = '';
+    curves.forEach((c, idx) => {
+        const item = document.createElement('div');
+        item.className = 'legend-item' + (c.visible ? '' : ' dimmed');
+        item.innerHTML = `<div class="legend-swatch" style="background:${c.color};"></div> ${c.name}`;
+        item.style.color = c.color;
+        item.addEventListener('click', () => {
+            c.visible = !c.visible;
+            item.classList.toggle('dimmed', !c.visible);
+        });
+        legendContainer.appendChild(item);
+    });
+}
+
+let animFrame = 0;
+let rafId = null;
+let looping = false;
+const LOOP_PAUSE_MS = 800;
+
+function drawAxes() {
+    ctx.save();
+
+    const gridCountY = 8;
+    const gridCountX = 6;
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    for (let i = 0; i <= gridCountY; i++) {
+        const y = PAD.top + (i / gridCountY) * PLOT_H;
+        ctx.beginPath();
+        ctx.moveTo(PAD.left, y);
+        ctx.lineTo(W - PAD.right, y);
+        ctx.stroke();
+    }
+    for (let i = 0; i <= gridCountX; i++) {
+        const x = PAD.left + (i / gridCountX) * PLOT_W;
+        ctx.beginPath();
+        ctx.moveTo(x, PAD.top);
+        ctx.lineTo(x, H - PAD.bottom);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, PAD.top - 10);
+    ctx.lineTo(PAD.left, H - PAD.bottom);
+    ctx.lineTo(W - PAD.right + 10, H - PAD.bottom);
+    ctx.stroke();
+
+    ctx.fillStyle = '#666';
+    ctx.font = '11px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    for (let i = 0; i <= gridCountX; i++) {
+        const x = PAD.left + (i / gridCountX) * PLOT_W;
+        const val = Math.round((i / gridCountX) * TOTAL_STEPS);
+        ctx.fillText(val, x, H - PAD.bottom + 20);
+    }
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= gridCountY; i++) {
+        const y = PAD.top + (i / gridCountY) * PLOT_H;
+        const val = (MAX_LOSS * (1 - i / gridCountY)).toFixed(1);
+        ctx.fillText(val, PAD.left - 10, y + 4);
+    }
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = 'bold 14px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('epoch', PAD.left + PLOT_W / 2, H - 10);
+
+    ctx.save();
+    ctx.translate(18, PAD.top + PLOT_H / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('loss', 0, 0);
+    ctx.restore();
+
+    // Arrow heads
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath();
+    ctx.moveTo(PAD.left - 5, PAD.top - 10);
+    ctx.lineTo(PAD.left, PAD.top - 20);
+    ctx.lineTo(PAD.left + 5, PAD.top - 10);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(W - PAD.right + 10, H - PAD.bottom - 5);
+    ctx.lineTo(W - PAD.right + 20, H - PAD.bottom);
+    ctx.lineTo(W - PAD.right + 10, H - PAD.bottom + 5);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function toX(idx) {
+    return PAD.left + (idx / TOTAL_STEPS) * PLOT_W;
+}
+
+function toY(val) {
+    const clamped = Math.max(0, Math.min(val, MAX_LOSS));
+    return PAD.top + (1 - clamped / MAX_LOSS) * PLOT_H;
+}
+
+function drawCurve(data, maxIdx, color, lineWidth, glow) {
+    if (maxIdx < 1) return;
+    ctx.save();
+
+    ctx.beginPath();
+    ctx.rect(PAD.left, PAD.top - 2, PLOT_W + 2, PLOT_H + 4);
+    ctx.clip();
+
+    if (glow) {
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 10;
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(toX(0), toY(data[0]));
+    for (let i = 1; i <= maxIdx && i < data.length; i++) {
+        ctx.lineTo(toX(i), toY(data[i]));
+    }
+    ctx.stroke();
+    ctx.restore();
+}
+
+function drawRunningDot(data, maxIdx, color) {
+    if (maxIdx < 1 || maxIdx >= data.length) return;
+    const x = toX(maxIdx);
+    const y = toY(data[maxIdx]);
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(x, y, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawLabel(data, maxIdx, name, color) {
+    if (maxIdx < 20) return;
+
+    const labelPositions = {
+        'very high learning rate': { tFrac: 0.35, offsetY: -25 },
+        'low learning rate': { tFrac: 0.35, offsetY: -22 },
+        'high learning rate': { tFrac: 0.65, offsetY: 18 },
+        'good learning rate': { tFrac: 0.45, offsetY: 22 },
+    };
+
+    const pos = labelPositions[name] || { tFrac: 0.5, offsetY: -20 };
+    const labelIdx = Math.min(Math.floor(pos.tFrac * maxIdx), maxIdx, data.length - 1);
+    const x = toX(labelIdx);
+    const y = toY(data[labelIdx]) + pos.offsetY;
+
+    ctx.save();
+    ctx.font = 'bold 13px Segoe UI, sans-serif';
+    const tw = ctx.measureText(name).width;
+
+    ctx.fillStyle = 'rgba(26,26,46,0.8)';
+    const bx = x - tw / 2 - 6;
+    const by = y - 12;
+    ctx.beginPath();
+    const r = 6;
+    ctx.moveTo(bx + r, by);
+    ctx.lineTo(bx + tw + 12 - r, by);
+    ctx.quadraticCurveTo(bx + tw + 12, by, bx + tw + 12, by + r);
+    ctx.lineTo(bx + tw + 12, by + 20 - r);
+    ctx.quadraticCurveTo(bx + tw + 12, by + 20, bx + tw + 12 - r, by + 20);
+    ctx.lineTo(bx + r, by + 20);
+    ctx.quadraticCurveTo(bx, by + 20, bx, by + 20 - r);
+    ctx.lineTo(bx, by + r);
+    ctx.quadraticCurveTo(bx, by, bx + r, by);
+    ctx.fill();
+
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.fillText(name, x, y + 4);
+    ctx.restore();
+}
+
+function drawGradientFill(data, maxIdx, color) {
+    if (maxIdx < 1) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PAD.left, PAD.top, PLOT_W, PLOT_H);
+    ctx.clip();
+
+    const grad = ctx.createLinearGradient(0, PAD.top, 0, H - PAD.bottom);
+    grad.addColorStop(0, color + '18');
+    grad.addColorStop(1, color + '00');
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(toX(0), toY(data[0]));
+    for (let i = 1; i <= maxIdx && i < data.length; i++) {
+        ctx.lineTo(toX(i), toY(data[i]));
+    }
+    ctx.lineTo(toX(Math.min(maxIdx, data.length - 1)), H - PAD.bottom);
+    ctx.lineTo(toX(0), H - PAD.bottom);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+}
+
+function render() {
+    ctx.clearRect(0, 0, W, H);
+    drawAxes();
+
+    const currentStep = Math.min(animFrame, TOTAL_STEPS);
+
+    curves.forEach(c => {
+        if (!c.visible) return;
+        drawGradientFill(c.data, currentStep, c.color);
+    });
+
+    curves.forEach(c => {
+        if (!c.visible) return;
+        drawCurve(c.data, currentStep, c.color, 3, true);
+        drawRunningDot(c.data, currentStep, c.color);
+        drawLabel(c.data, currentStep, c.name, c.color);
+    });
+
+    ctx.fillStyle = '#555';
+    ctx.font = '11px Segoe UI, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('Epoch ' + currentStep + ' / ' + TOTAL_STEPS, W - PAD.right, PAD.top - 12);
+}
+
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (W / rect.width);
+    const my = (e.clientY - rect.top) * (H / rect.height);
+
+    if (mx < PAD.left || mx > W - PAD.right || my < PAD.top || my > H - PAD.bottom) {
+        tooltip.style.display = 'none';
+        return;
+    }
+
+    const stepIdx = Math.round(((mx - PAD.left) / PLOT_W) * TOTAL_STEPS);
+    const clampedIdx = Math.max(0, Math.min(stepIdx, Math.min(animFrame, TOTAL_STEPS)));
+
+    let lines = [];
+    curves.forEach(c => {
+        if (!c.visible || clampedIdx >= c.data.length) return;
+        lines.push(`<span style="color:${c.color};">● ${c.name}: ${c.data[clampedIdx].toFixed(3)}</span>`);
+    });
+
+    if (lines.length === 0) {
+        tooltip.style.display = 'none';
+        return;
+    }
+
+    tooltip.innerHTML = `<div style="color:#aaa;margin-bottom:4px;">Epoch ${clampedIdx}</div>` + lines.join('<br>');
+    tooltip.style.display = 'block';
+
+    const tipW = tooltip.offsetWidth;
+    const tipH = tooltip.offsetHeight;
+    let tx = e.clientX - rect.left + 16;
+    let ty = e.clientY - rect.top - tipH / 2;
+    if (tx + tipW > rect.width - 10) tx = e.clientX - rect.left - tipW - 16;
+    if (ty < 4) ty = 4;
+    if (ty + tipH > rect.height - 4) ty = rect.height - tipH - 4;
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top = ty + 'px';
+});
+
+canvas.addEventListener('mouseleave', () => {
+    tooltip.style.display = 'none';
+});
+
+function animate() {
+    const speed = parseInt(speedSlider.value);
+    animFrame += speed;
+    if (animFrame > TOTAL_STEPS) animFrame = TOTAL_STEPS;
+
+    render();
+
+    if (animFrame < TOTAL_STEPS) {
+        rafId = requestAnimationFrame(animate);
+    } else if (looping) {
+        setTimeout(() => {
+            if (!looping) return;
+            animFrame = 0;
+            curves.forEach(c => c.generate());
+            render();
+            rafId = requestAnimationFrame(animate);
+        }, LOOP_PAUSE_MS);
+    }
+}
+
+function reset() {
+    cancelAnimationFrame(rafId);
+    looping = false;
+    updateLoopBtn();
+    animFrame = 0;
+    curves.forEach(c => { c.generate(); c.visible = true; });
+    buildLegend();
+    render();
+    rafId = requestAnimationFrame(animate);
+}
+
+function toggleLoop() {
+    looping = !looping;
+    updateLoopBtn();
+    if (looping) {
+        cancelAnimationFrame(rafId);
+        animFrame = 0;
+        curves.forEach(c => c.generate());
+        render();
+        rafId = requestAnimationFrame(animate);
+    }
+}
+
+function updateLoopBtn() {
+    if (looping) {
+        loopBtn.textContent = 'Stop ■';
+        loopBtn.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+    } else {
+        loopBtn.textContent = 'Loop ⟳';
+        loopBtn.style.background = 'linear-gradient(135deg, #a855f7, #7c3aed)';
+    }
+}
+
+speedSlider.addEventListener('input', () => {
+    speedVal.textContent = speedSlider.value;
+});
+resetBtn.addEventListener('click', reset);
+loopBtn.addEventListener('click', toggleLoop);
+
+curves.forEach(c => c.generate());
+buildLegend();
+rafId = requestAnimationFrame(animate);
+</script>
+</body>
+</html>
