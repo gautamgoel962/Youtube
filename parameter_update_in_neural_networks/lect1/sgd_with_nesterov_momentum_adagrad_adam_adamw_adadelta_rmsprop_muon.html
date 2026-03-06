@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SGD vs Momentum vs Nesterov vs AdaGrad vs Adam vs AdamW vs Adadelta vs RMSProp vs Muon - 3D Loss Landscape</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        h1 {
+            color: #eee;
+            margin-bottom: 5px;
+            font-size: 22px;
+            position: absolute;
+            top: 20px;
+            z-index: 10;
+        }
+        .subtitle {
+            color: #888;
+            font-size: 13px;
+            position: absolute;
+            top: 55px;
+            z-index: 10;
+        }
+        .info {
+            position: absolute;
+            top: 90px;
+            left: 20px;
+            color: #fff;
+            font-size: 14px;
+            z-index: 10;
+            background: rgba(0,0,0,0.6);
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 280px;
+        }
+        .info div {
+            margin: 5px 0;
+        }
+        .info span {
+            color: #aaa;
+            font-size: 11px;
+            display: block;
+            margin-top: 10px;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        .labels {
+            position: absolute;
+            bottom: 20px;
+            color: #aaa;
+            font-size: 14px;
+            z-index: 10;
+        }
+        .instructions {
+            position: absolute;
+            bottom: 50px;
+            color: #666;
+            font-size: 12px;
+            z-index: 10;
+        }
+        .legend {
+            position: absolute;
+            top: 90px;
+            right: 20px;
+            color: #fff;
+            font-size: 13px;
+            z-index: 10;
+            background: rgba(0,0,0,0.6);
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 320px;
+        }
+        .legend div {
+            margin: 6px 0;
+            display: flex;
+            align-items: center;
+        }
+        .legend-color {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            margin-right: 10px;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+        .legend-text {
+            font-size: 11px;
+            line-height: 1.3;
+        }
+    </style>
+</head>
+<body>
+    <h1>SGD vs Momentum vs Nesterov vs AdaGrad vs Adam vs AdamW vs Adadelta vs RMSProp vs Muon</h1>
+    <p class="subtitle">Compare how different optimizers navigate the loss landscape</p>
+    <div class="info">
+        <div><strong style="color: #ff6666;">● SGD:</strong> Loss = <span id="sgd-loss">0.0000</span></div>
+        <div><strong style="color: #6666ff;">● Momentum:</strong> Loss = <span id="momentum-loss">0.0000</span></div>
+        <div><strong style="color: #66ff66;">● Nesterov:</strong> Loss = <span id="nesterov-loss">0.0000</span></div>
+        <div><strong style="color: #ffaa00;">● AdaGrad:</strong> Loss = <span id="adagrad-loss">0.0000</span></div>
+        <div><strong style="color: #ff44ff;">● Adam:</strong> Loss = <span id="adam-loss">0.0000</span></div>
+        <div><strong style="color: #00dddd;">● AdamW:</strong> Loss = <span id="adamw-loss">0.0000</span></div>
+        <div><strong style="color: #aadd00;">● Adadelta:</strong> Loss = <span id="adadelta-loss">0.0000</span></div>
+        <div><strong style="color: #aa88ff;">● RMSProp:</strong> Loss = <span id="rmsprop-loss">0.0000</span></div>
+        <div><strong style="color: #88ffdd;">● Muon:</strong> Loss = <span id="muon-loss">0.0000</span></div>
+        <span>Muon orthogonalizes Nesterov momentum, equalizing update scale across directions</span>
+    </div>
+    <div class="legend">
+        <div><span class="legend-color" style="background: #ff6666;"></span><span class="legend-text">SGD: w -= lr × ∇w</span></div>
+        <div><span class="legend-color" style="background: #6666ff;"></span><span class="legend-text">Momentum: v = βv - lr×∇w; w += v</span></div>
+        <div><span class="legend-color" style="background: #66ff66;"></span><span class="legend-text">Nesterov: v = βv - lr×∇(w+βv); w += v</span></div>
+        <div><span class="legend-color" style="background: #ffaa00;"></span><span class="legend-text">AdaGrad: G += ∇w²; w -= lr×∇w/√(G+ε)</span></div>
+        <div><span class="legend-color" style="background: #ff44ff;"></span><span class="legend-text">Adam: m=β₁m+(1-β₁)∇w; v=β₂v+(1-β₂)∇w²; w-=lr·m̂/√(v̂+ε)</span></div>
+        <div><span class="legend-color" style="background: #00dddd;"></span><span class="legend-text">AdamW: Adam + decoupled decay; w-=lr·(m̂/√(v̂+ε) + λw)</span></div>
+        <div><span class="legend-color" style="background: #aadd00;"></span><span class="legend-text">Adadelta: E[g²]=ρE[g²]+(1-ρ)g²; Δw=-√(E[Δw²]+ε)/√(E[g²]+ε)·g</span></div>
+        <div><span class="legend-color" style="background: #aa88ff;"></span><span class="legend-text">RMSProp: E[g²]=ρE[g²]+(1-ρ)g²; w-=lr·g/√(E[g²]+ε)</span></div>
+        <div><span class="legend-color" style="background: #88ffdd;"></span><span class="legend-text">Muon: v=βv+∇(w+βv); w-=lr·v/‖v‖ (orthogonalized Nesterov)</span></div>
+        <div style="margin-top: 10px; font-size: 11px; color: #aaa;">All optimizers start from the same position</div>
+    </div>
+    <div id="canvas-container"></div>
+    <p class="instructions">Drag to rotate | Scroll to zoom</p>
+    <p class="labels">w₁ (weight 1) | w₂ (weight 2) | Loss (height)</p>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <script>
+        // Scene setup
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+        
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(8, 6, 8);
+        camera.lookAt(0, 0, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+        
+        // Orbit controls for rotation
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 5;
+        controls.maxDistance = 20;
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 10, 5);
+        scene.add(directionalLight);
+        
+        const pointLight = new THREE.PointLight(0x6464ff, 0.5);
+        pointLight.position.set(-5, 5, -5);
+        scene.add(pointLight);
+        
+        // Loss function parameters - steep in w2, shallow in w1
+        const steepnessW1 = 0.05;   // Shallow in w1
+        const steepnessW2 = 0.8;    // Steep in w2
+        
+        // Create the loss surface (elongated bowl)
+        function lossFunction(w1, w2) {
+            return steepnessW1 * w1 * w1 + steepnessW2 * w2 * w2;
+        }
+        
+        // Create surface geometry
+        const surfaceSize = 6;
+        const surfaceResolution = 80;
+        const surfaceGeometry = new THREE.PlaneGeometry(
+            surfaceSize * 2, 
+            surfaceSize * 2, 
+            surfaceResolution, 
+            surfaceResolution
+        );
+        
+        // Modify vertices to create the bowl shape
+        const positions = surfaceGeometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const z = positions[i + 1];
+            positions[i + 2] = lossFunction(x, z);
+        }
+        surfaceGeometry.computeVertexNormals();
+        
+        // Create gradient material for the surface
+        const surfaceMaterial = new THREE.MeshPhongMaterial({
+            color: 0x4444aa,
+            shininess: 30,
+            transparent: true,
+            opacity: 0.7,
+            side: THREE.DoubleSide,
+            wireframe: false
+        });
+        
+        const surface = new THREE.Mesh(surfaceGeometry, surfaceMaterial);
+        surface.rotation.x = -Math.PI / 2;
+        scene.add(surface);
+        
+        // Add wireframe overlay
+        const wireframeMaterial = new THREE.MeshBasicMaterial({
+            color: 0x6666cc,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.3
+        });
+        const wireframe = new THREE.Mesh(surfaceGeometry.clone(), wireframeMaterial);
+        wireframe.rotation.x = -Math.PI / 2;
+        scene.add(wireframe);
+        
+        // Create contour lines on the surface
+        function createContourLines() {
+            const contourGroup = new THREE.Group();
+            const levels = [0.2, 0.5, 1, 2, 3, 4, 5];
+            
+            levels.forEach((level, idx) => {
+                const points = [];
+                const segments = 64;
+                
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const w1 = Math.sqrt(level / steepnessW1) * Math.cos(angle);
+                    const w2 = Math.sqrt(level / steepnessW2) * Math.sin(angle);
+                    const y = level + 0.02;
+                    points.push(new THREE.Vector3(w1, y, w2));
+                }
+                
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineBasicMaterial({ 
+                    color: new THREE.Color().setHSL(0.6 - idx * 0.05, 0.7, 0.5),
+                    transparent: true,
+                    opacity: 0.6
+                });
+                const line = new THREE.Line(geometry, material);
+                contourGroup.add(line);
+            });
+            
+            return contourGroup;
+        }
+        
+        scene.add(createContourLines());
+        
+        // Create minimum point marker
+        const minGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const minMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
+        const minMarker = new THREE.Mesh(minGeometry, minMaterial);
+        minMarker.position.set(0, 0.05, 0);
+        scene.add(minMarker);
+        
+        // Add glow to minimum
+        const minGlowGeometry = new THREE.SphereGeometry(0.2, 16, 16);
+        const minGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x00ff88, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const minGlow = new THREE.Mesh(minGlowGeometry, minGlowMaterial);
+        minGlow.position.set(0, 0.05, 0);
+        scene.add(minGlow);
+        
+        // Create ball geometry (shared)
+        const ballGeometry = new THREE.SphereGeometry(0.15, 32, 32);
+        const glowGeometry = new THREE.SphereGeometry(0.25, 16, 16);
+        
+        // Create SGD ball (RED)
+        const sgdBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0xff3333,
+            emissive: 0xff0000,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const sgdBall = new THREE.Mesh(ballGeometry, sgdBallMaterial);
+        scene.add(sgdBall);
+        
+        const sgdBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff3333, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const sgdBallGlow = new THREE.Mesh(glowGeometry, sgdBallGlowMaterial);
+        scene.add(sgdBallGlow);
+        
+        // Create Momentum ball (BLUE)
+        const momentumBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0x3333ff,
+            emissive: 0x0000ff,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const momentumBall = new THREE.Mesh(ballGeometry.clone(), momentumBallMaterial);
+        scene.add(momentumBall);
+        
+        const momentumBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x3333ff, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const momentumBallGlow = new THREE.Mesh(glowGeometry.clone(), momentumBallGlowMaterial);
+        scene.add(momentumBallGlow);
+        
+        // Create Nesterov ball (GREEN)
+        const nesterovBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0x33ff33,
+            emissive: 0x00ff00,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const nesterovBall = new THREE.Mesh(ballGeometry.clone(), nesterovBallMaterial);
+        scene.add(nesterovBall);
+        
+        const nesterovBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x33ff33, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const nesterovBallGlow = new THREE.Mesh(glowGeometry.clone(), nesterovBallGlowMaterial);
+        scene.add(nesterovBallGlow);
+        
+        // Create AdaGrad ball (ORANGE)
+        const adagradBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0xffaa00,
+            emissive: 0xff8800,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const adagradBall = new THREE.Mesh(ballGeometry.clone(), adagradBallMaterial);
+        scene.add(adagradBall);
+        
+        const adagradBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffaa00, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const adagradBallGlow = new THREE.Mesh(glowGeometry.clone(), adagradBallGlowMaterial);
+        scene.add(adagradBallGlow);
+        
+        // Create Adam ball (MAGENTA)
+        const adamBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0xff44ff,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const adamBall = new THREE.Mesh(ballGeometry.clone(), adamBallMaterial);
+        scene.add(adamBall);
+        
+        const adamBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff44ff, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const adamBallGlow = new THREE.Mesh(glowGeometry.clone(), adamBallGlowMaterial);
+        scene.add(adamBallGlow);
+        
+        // Create AdamW ball (CYAN)
+        const adamwBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0x00dddd,
+            emissive: 0x00aaaa,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const adamwBall = new THREE.Mesh(ballGeometry.clone(), adamwBallMaterial);
+        scene.add(adamwBall);
+        
+        const adamwBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x00dddd, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const adamwBallGlow = new THREE.Mesh(glowGeometry.clone(), adamwBallGlowMaterial);
+        scene.add(adamwBallGlow);
+        
+        // Create Adadelta ball (YELLOW-GREEN)
+        const adadeltaBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0xaadd00,
+            emissive: 0x88aa00,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const adadeltaBall = new THREE.Mesh(ballGeometry.clone(), adadeltaBallMaterial);
+        scene.add(adadeltaBall);
+        
+        const adadeltaBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xaadd00, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const adadeltaBallGlow = new THREE.Mesh(glowGeometry.clone(), adadeltaBallGlowMaterial);
+        scene.add(adadeltaBallGlow);
+        
+        // Create RMSProp ball (LAVENDER)
+        const rmspropBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0xaa88ff,
+            emissive: 0x8866dd,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const rmspropBall = new THREE.Mesh(ballGeometry.clone(), rmspropBallMaterial);
+        scene.add(rmspropBall);
+        
+        const rmspropBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xaa88ff, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const rmspropBallGlow = new THREE.Mesh(glowGeometry.clone(), rmspropBallGlowMaterial);
+        scene.add(rmspropBallGlow);
+        
+        // Create Muon ball (MINT)
+        const muonBallMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0x88ffdd,
+            emissive: 0x44ddaa,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const muonBall = new THREE.Mesh(ballGeometry.clone(), muonBallMaterial);
+        scene.add(muonBall);
+        
+        const muonBallGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x88ffdd, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const muonBallGlow = new THREE.Mesh(glowGeometry.clone(), muonBallGlowMaterial);
+        scene.add(muonBallGlow);
+        
+        // Create path trails
+        const maxPathPoints = 500;
+        
+        function createPathLine(color) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(maxPathPoints * 3);
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const material = new THREE.LineBasicMaterial({ 
+                color: color,
+                transparent: true,
+                opacity: 0.7
+            });
+            return new THREE.Line(geometry, material);
+        }
+        
+        const sgdPathLine = createPathLine(0xff6666);
+        scene.add(sgdPathLine);
+        
+        const momentumPathLine = createPathLine(0x6666ff);
+        scene.add(momentumPathLine);
+        
+        const nesterovPathLine = createPathLine(0x66ff66);
+        scene.add(nesterovPathLine);
+        
+        const adagradPathLine = createPathLine(0xffcc44);
+        scene.add(adagradPathLine);
+        
+        const adamPathLine = createPathLine(0xff88ff);
+        scene.add(adamPathLine);
+        
+        const adamwPathLine = createPathLine(0x44eeee);
+        scene.add(adamwPathLine);
+        
+        const adadeltaPathLine = createPathLine(0xccee44);
+        scene.add(adadeltaPathLine);
+        
+        const rmspropPathLine = createPathLine(0xbb99ff);
+        scene.add(rmspropPathLine);
+        
+        const muonPathLine = createPathLine(0xaaffee);
+        scene.add(muonPathLine);
+        
+        // Axes
+        function createAxes() {
+            const axesGroup = new THREE.Group();
+            
+            const w1Points = [new THREE.Vector3(-6, 0, 0), new THREE.Vector3(6, 0, 0)];
+            const w1Geometry = new THREE.BufferGeometry().setFromPoints(w1Points);
+            const w1Material = new THREE.LineBasicMaterial({ color: 0x888888 });
+            const w1Axis = new THREE.Line(w1Geometry, w1Material);
+            axesGroup.add(w1Axis);
+            
+            const w2Points = [new THREE.Vector3(0, 0, -6), new THREE.Vector3(0, 0, 6)];
+            const w2Geometry = new THREE.BufferGeometry().setFromPoints(w2Points);
+            const w2Material = new THREE.LineBasicMaterial({ color: 0x888888 });
+            const w2Axis = new THREE.Line(w2Geometry, w2Material);
+            axesGroup.add(w2Axis);
+            
+            const lossPoints = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 6, 0)];
+            const lossGeometry = new THREE.BufferGeometry().setFromPoints(lossPoints);
+            const lossMaterial = new THREE.LineBasicMaterial({ color: 0x888888 });
+            const lossAxis = new THREE.Line(lossGeometry, lossMaterial);
+            axesGroup.add(lossAxis);
+            
+            return axesGroup;
+        }
+        
+        scene.add(createAxes());
+        
+        // Animation state
+        let sgdState = { w1: 0, w2: 0 };
+        let momentumState = { w1: 0, w2: 0, vw1: 0, vw2: 0 };
+        let nesterovState = { w1: 0, w2: 0, vw1: 0, vw2: 0 };
+        let adagradState = { w1: 0, w2: 0, Gw1: 0, Gw2: 0 };
+        let adamState = { w1: 0, w2: 0, mw1: 0, mw2: 0, vw1: 0, vw2: 0, t: 0 };
+        let adamwState = { w1: 0, w2: 0, mw1: 0, mw2: 0, vw1: 0, vw2: 0, t: 0 };
+        let adadeltaState = { w1: 0, w2: 0, Eg2w1: 0, Eg2w2: 0, Edw2w1: 0, Edw2w2: 0 };
+        let rmspropState = { w1: 0, w2: 0, Eg2w1: 0, Eg2w2: 0 };
+        let muonState = { w1: 0, w2: 0, vw1: 0, vw2: 0 };
+        
+        let sgdPathPoints = [];
+        let momentumPathPoints = [];
+        let nesterovPathPoints = [];
+        let adagradPathPoints = [];
+        let adamPathPoints = [];
+        let adamwPathPoints = [];
+        let adadeltaPathPoints = [];
+        let rmspropPathPoints = [];
+        let muonPathPoints = [];
+        
+        let time = 0;
+        let frameCounter = 0;
+        const updateInterval = 3;
+        
+        function initAnimation() {
+            const startW1 = -4.5;
+            const startW2 = 1.5;
+            
+            sgdState = { w1: startW1, w2: startW2 };
+            momentumState = { w1: startW1, w2: startW2, vw1: 0, vw2: 0 };
+            nesterovState = { w1: startW1, w2: startW2, vw1: 0, vw2: 0 };
+            adagradState = { w1: startW1, w2: startW2, Gw1: 0, Gw2: 0 };
+            adamState = { w1: startW1, w2: startW2, mw1: 0, mw2: 0, vw1: 0, vw2: 0, t: 0 };
+            adamwState = { w1: startW1, w2: startW2, mw1: 0, mw2: 0, vw1: 0, vw2: 0, t: 0 };
+            adadeltaState = { w1: startW1, w2: startW2, Eg2w1: 0, Eg2w2: 0, Edw2w1: 0, Edw2w2: 0 };
+            rmspropState = { w1: startW1, w2: startW2, Eg2w1: 0, Eg2w2: 0 };
+            muonState = { w1: startW1, w2: startW2, vw1: 0, vw2: 0 };
+            
+            sgdPathPoints = [];
+            momentumPathPoints = [];
+            nesterovPathPoints = [];
+            adagradPathPoints = [];
+            adamPathPoints = [];
+            adamwPathPoints = [];
+            adadeltaPathPoints = [];
+            rmspropPathPoints = [];
+            muonPathPoints = [];
+            time = 0;
+            frameCounter = 0;
+            
+            // Reset all path geometries
+            [sgdPathLine, momentumPathLine, nesterovPathLine, adagradPathLine, adamPathLine, adamwPathLine, adadeltaPathLine, rmspropPathLine, muonPathLine].forEach(line => {
+                const positions = line.geometry.attributes.position.array;
+                for (let i = 0; i < positions.length; i++) {
+                    positions[i] = 0;
+                }
+                line.geometry.setDrawRange(0, 0);
+            });
+        }
+        
+        function updateSGD() {
+            const learningRate = 0.08;
+            const noise = 0.05;
+            
+            const gradW1 = 2 * steepnessW1 * sgdState.w1;
+            const gradW2 = 2 * steepnessW2 * sgdState.w2;
+            
+            const dist = Math.sqrt(sgdState.w1 * sgdState.w1 + sgdState.w2 * sgdState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            sgdState.w1 -= learningRate * gradW1 + (Math.random() - 0.5) * jitterFactor * 0.3;
+            sgdState.w2 -= learningRate * gradW2 + (Math.random() - 0.5) * jitterFactor * 2;
+            
+            const loss = lossFunction(sgdState.w1, sgdState.w2);
+            
+            sgdBall.position.set(sgdState.w1, loss + 0.15, sgdState.w2);
+            sgdBallGlow.position.copy(sgdBall.position);
+            
+            document.getElementById('sgd-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                sgdPathPoints.push({ w1: sgdState.w1, w2: sgdState.w2, loss: loss });
+                if (sgdPathPoints.length > maxPathPoints) sgdPathPoints.shift();
+                
+                const positions = sgdPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < sgdPathPoints.length; i++) {
+                    positions[i * 3] = sgdPathPoints[i].w1;
+                    positions[i * 3 + 1] = sgdPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = sgdPathPoints[i].w2;
+                }
+                sgdPathLine.geometry.attributes.position.needsUpdate = true;
+                sgdPathLine.geometry.setDrawRange(0, sgdPathPoints.length);
+            }
+        }
+        
+        function updateMomentum() {
+            const learningRate = 0.08;
+            const beta = 0.9;
+            const noise = 0.05;
+            
+            const gradW1 = 2 * steepnessW1 * momentumState.w1;
+            const gradW2 = 2 * steepnessW2 * momentumState.w2;
+            
+            const dist = Math.sqrt(momentumState.w1 * momentumState.w1 + momentumState.w2 * momentumState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            momentumState.vw1 = beta * momentumState.vw1 - learningRate * gradW1 + (Math.random() - 0.5) * jitterFactor * 0.3;
+            momentumState.vw2 = beta * momentumState.vw2 - learningRate * gradW2 + (Math.random() - 0.5) * jitterFactor * 2;
+            
+            momentumState.w1 += momentumState.vw1;
+            momentumState.w2 += momentumState.vw2;
+            
+            const loss = lossFunction(momentumState.w1, momentumState.w2);
+            
+            momentumBall.position.set(momentumState.w1, loss + 0.15, momentumState.w2);
+            momentumBallGlow.position.copy(momentumBall.position);
+            
+            document.getElementById('momentum-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                momentumPathPoints.push({ w1: momentumState.w1, w2: momentumState.w2, loss: loss });
+                if (momentumPathPoints.length > maxPathPoints) momentumPathPoints.shift();
+                
+                const positions = momentumPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < momentumPathPoints.length; i++) {
+                    positions[i * 3] = momentumPathPoints[i].w1;
+                    positions[i * 3 + 1] = momentumPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = momentumPathPoints[i].w2;
+                }
+                momentumPathLine.geometry.attributes.position.needsUpdate = true;
+                momentumPathLine.geometry.setDrawRange(0, momentumPathPoints.length);
+            }
+        }
+        
+        function updateNesterov() {
+            const learningRate = 0.08;
+            const beta = 0.9;
+            const noise = 0.05;
+            
+            const phiW1 = nesterovState.w1 + beta * nesterovState.vw1;
+            const phiW2 = nesterovState.w2 + beta * nesterovState.vw2;
+            
+            const gradW1 = 2 * steepnessW1 * phiW1;
+            const gradW2 = 2 * steepnessW2 * phiW2;
+            
+            const dist = Math.sqrt(nesterovState.w1 * nesterovState.w1 + nesterovState.w2 * nesterovState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            const vw1Prev = nesterovState.vw1;
+            const vw2Prev = nesterovState.vw2;
+            
+            nesterovState.vw1 = beta * vw1Prev - learningRate * gradW1 + (Math.random() - 0.5) * jitterFactor * 0.3;
+            nesterovState.vw2 = beta * vw2Prev - learningRate * gradW2 + (Math.random() - 0.5) * jitterFactor * 2;
+            
+            nesterovState.w1 += -beta * vw1Prev + (1 + beta) * nesterovState.vw1;
+            nesterovState.w2 += -beta * vw2Prev + (1 + beta) * nesterovState.vw2;
+            
+            const loss = lossFunction(nesterovState.w1, nesterovState.w2);
+            
+            nesterovBall.position.set(nesterovState.w1, loss + 0.15, nesterovState.w2);
+            nesterovBallGlow.position.copy(nesterovBall.position);
+            
+            document.getElementById('nesterov-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                nesterovPathPoints.push({ w1: nesterovState.w1, w2: nesterovState.w2, loss: loss });
+                if (nesterovPathPoints.length > maxPathPoints) nesterovPathPoints.shift();
+                
+                const positions = nesterovPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < nesterovPathPoints.length; i++) {
+                    positions[i * 3] = nesterovPathPoints[i].w1;
+                    positions[i * 3 + 1] = nesterovPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = nesterovPathPoints[i].w2;
+                }
+                nesterovPathLine.geometry.attributes.position.needsUpdate = true;
+                nesterovPathLine.geometry.setDrawRange(0, nesterovPathPoints.length);
+            }
+        }
+        
+        function updateAdaGrad() {
+            const learningRate = 0.5;  // AdaGrad typically uses higher base learning rate
+            const epsilon = 1e-8;      // Small constant to prevent division by zero
+            const noise = 0.05;
+            
+            // Calculate gradients
+            const gradW1 = 2 * steepnessW1 * adagradState.w1;
+            const gradW2 = 2 * steepnessW2 * adagradState.w2;
+            
+            // Accumulate squared gradients
+            // G_t = G_{t-1} + grad^2
+            adagradState.Gw1 += gradW1 * gradW1;
+            adagradState.Gw2 += gradW2 * gradW2;
+            
+            // Distance-based jitter
+            const dist = Math.sqrt(adagradState.w1 * adagradState.w1 + adagradState.w2 * adagradState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            // AdaGrad update: w -= (lr / sqrt(G + epsilon)) * grad
+            // The adaptive learning rate reduces updates in directions with large accumulated gradients
+            const adaptiveLrW1 = learningRate / (Math.sqrt(adagradState.Gw1) + epsilon);
+            const adaptiveLrW2 = learningRate / (Math.sqrt(adagradState.Gw2) + epsilon);
+            
+            adagradState.w1 -= adaptiveLrW1 * gradW1 + (Math.random() - 0.5) * jitterFactor * 0.3;
+            adagradState.w2 -= adaptiveLrW2 * gradW2 + (Math.random() - 0.5) * jitterFactor * 0.5;  // Less noise due to adaptive lr
+            
+            const loss = lossFunction(adagradState.w1, adagradState.w2);
+            
+            adagradBall.position.set(adagradState.w1, loss + 0.15, adagradState.w2);
+            adagradBallGlow.position.copy(adagradBall.position);
+            
+            document.getElementById('adagrad-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                adagradPathPoints.push({ w1: adagradState.w1, w2: adagradState.w2, loss: loss });
+                if (adagradPathPoints.length > maxPathPoints) adagradPathPoints.shift();
+                
+                const positions = adagradPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < adagradPathPoints.length; i++) {
+                    positions[i * 3] = adagradPathPoints[i].w1;
+                    positions[i * 3 + 1] = adagradPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = adagradPathPoints[i].w2;
+                }
+                adagradPathLine.geometry.attributes.position.needsUpdate = true;
+                adagradPathLine.geometry.setDrawRange(0, adagradPathPoints.length);
+            }
+        }
+        
+        function updateAdam() {
+            const learningRate = 0.08;
+            const beta1 = 0.9;
+            const beta2 = 0.999;
+            const epsilon = 1e-8;
+            const noise = 0.05;
+            
+            adamState.t += 1;
+            
+            const gradW1 = 2 * steepnessW1 * adamState.w1;
+            const gradW2 = 2 * steepnessW2 * adamState.w2;
+            
+            // First moment estimate (mean of gradients, like momentum)
+            adamState.mw1 = beta1 * adamState.mw1 + (1 - beta1) * gradW1;
+            adamState.mw2 = beta1 * adamState.mw2 + (1 - beta1) * gradW2;
+            
+            // Second moment estimate (mean of squared gradients, like RMSProp)
+            adamState.vw1 = beta2 * adamState.vw1 + (1 - beta2) * gradW1 * gradW1;
+            adamState.vw2 = beta2 * adamState.vw2 + (1 - beta2) * gradW2 * gradW2;
+            
+            // Bias-corrected first and second moment estimates
+            const mHatW1 = adamState.mw1 / (1 - Math.pow(beta1, adamState.t));
+            const mHatW2 = adamState.mw2 / (1 - Math.pow(beta1, adamState.t));
+            const vHatW1 = adamState.vw1 / (1 - Math.pow(beta2, adamState.t));
+            const vHatW2 = adamState.vw2 / (1 - Math.pow(beta2, adamState.t));
+            
+            const dist = Math.sqrt(adamState.w1 * adamState.w1 + adamState.w2 * adamState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            // Adam update: w -= lr * m_hat / (sqrt(v_hat) + epsilon)
+            adamState.w1 -= learningRate * mHatW1 / (Math.sqrt(vHatW1) + epsilon) + (Math.random() - 0.5) * jitterFactor * 0.3;
+            adamState.w2 -= learningRate * mHatW2 / (Math.sqrt(vHatW2) + epsilon) + (Math.random() - 0.5) * jitterFactor * 0.5;
+            
+            const loss = lossFunction(adamState.w1, adamState.w2);
+            
+            adamBall.position.set(adamState.w1, loss + 0.15, adamState.w2);
+            adamBallGlow.position.copy(adamBall.position);
+            
+            document.getElementById('adam-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                adamPathPoints.push({ w1: adamState.w1, w2: adamState.w2, loss: loss });
+                if (adamPathPoints.length > maxPathPoints) adamPathPoints.shift();
+                
+                const positions = adamPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < adamPathPoints.length; i++) {
+                    positions[i * 3] = adamPathPoints[i].w1;
+                    positions[i * 3 + 1] = adamPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = adamPathPoints[i].w2;
+                }
+                adamPathLine.geometry.attributes.position.needsUpdate = true;
+                adamPathLine.geometry.setDrawRange(0, adamPathPoints.length);
+            }
+        }
+        
+        function updateAdamW() {
+            const learningRate = 0.08;
+            const beta1 = 0.9;
+            const beta2 = 0.999;
+            const epsilon = 1e-8;
+            const weightDecay = 0.01;
+            const noise = 0.05;
+            
+            adamwState.t += 1;
+            
+            // Gradients of the loss only (no weight decay mixed into gradient)
+            const gradW1 = 2 * steepnessW1 * adamwState.w1;
+            const gradW2 = 2 * steepnessW2 * adamwState.w2;
+            
+            // First moment estimate (momentum on pure gradient)
+            adamwState.mw1 = beta1 * adamwState.mw1 + (1 - beta1) * gradW1;
+            adamwState.mw2 = beta1 * adamwState.mw2 + (1 - beta1) * gradW2;
+            
+            // Second moment estimate (RMSProp on pure gradient)
+            adamwState.vw1 = beta2 * adamwState.vw1 + (1 - beta2) * gradW1 * gradW1;
+            adamwState.vw2 = beta2 * adamwState.vw2 + (1 - beta2) * gradW2 * gradW2;
+            
+            // Bias-corrected estimates
+            const mHatW1 = adamwState.mw1 / (1 - Math.pow(beta1, adamwState.t));
+            const mHatW2 = adamwState.mw2 / (1 - Math.pow(beta1, adamwState.t));
+            const vHatW1 = adamwState.vw1 / (1 - Math.pow(beta2, adamwState.t));
+            const vHatW2 = adamwState.vw2 / (1 - Math.pow(beta2, adamwState.t));
+            
+            const dist = Math.sqrt(adamwState.w1 * adamwState.w1 + adamwState.w2 * adamwState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            // AdamW: decoupled weight decay applied directly to weights
+            // w -= lr * (m_hat / (sqrt(v_hat) + eps) + lambda * w)
+            adamwState.w1 -= learningRate * (mHatW1 / (Math.sqrt(vHatW1) + epsilon) + weightDecay * adamwState.w1) + (Math.random() - 0.5) * jitterFactor * 0.3;
+            adamwState.w2 -= learningRate * (mHatW2 / (Math.sqrt(vHatW2) + epsilon) + weightDecay * adamwState.w2) + (Math.random() - 0.5) * jitterFactor * 0.5;
+            
+            const loss = lossFunction(adamwState.w1, adamwState.w2);
+            
+            adamwBall.position.set(adamwState.w1, loss + 0.15, adamwState.w2);
+            adamwBallGlow.position.copy(adamwBall.position);
+            
+            document.getElementById('adamw-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                adamwPathPoints.push({ w1: adamwState.w1, w2: adamwState.w2, loss: loss });
+                if (adamwPathPoints.length > maxPathPoints) adamwPathPoints.shift();
+                
+                const positions = adamwPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < adamwPathPoints.length; i++) {
+                    positions[i * 3] = adamwPathPoints[i].w1;
+                    positions[i * 3 + 1] = adamwPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = adamwPathPoints[i].w2;
+                }
+                adamwPathLine.geometry.attributes.position.needsUpdate = true;
+                adamwPathLine.geometry.setDrawRange(0, adamwPathPoints.length);
+            }
+        }
+        
+        function updateAdadelta() {
+            const rho = 0.99;
+            const epsilon = 1e-6;
+            const noise = 0.05;
+            
+            const gradW1 = 2 * steepnessW1 * adadeltaState.w1;
+            const gradW2 = 2 * steepnessW2 * adadeltaState.w2;
+            
+            // Accumulate running average of squared gradients
+            // E[g²]_t = ρ * E[g²]_{t-1} + (1-ρ) * g_t²
+            adadeltaState.Eg2w1 = rho * adadeltaState.Eg2w1 + (1 - rho) * gradW1 * gradW1;
+            adadeltaState.Eg2w2 = rho * adadeltaState.Eg2w2 + (1 - rho) * gradW2 * gradW2;
+            
+            // Compute update using ratio of RMS of past updates to RMS of gradients
+            // Δw_t = -√(E[Δw²]_{t-1} + ε) / √(E[g²]_t + ε) * g_t
+            const dwW1 = -Math.sqrt(adadeltaState.Edw2w1 + epsilon) / Math.sqrt(adadeltaState.Eg2w1 + epsilon) * gradW1;
+            const dwW2 = -Math.sqrt(adadeltaState.Edw2w2 + epsilon) / Math.sqrt(adadeltaState.Eg2w2 + epsilon) * gradW2;
+            
+            // Accumulate running average of squared updates
+            // E[Δw²]_t = ρ * E[Δw²]_{t-1} + (1-ρ) * Δw_t²
+            adadeltaState.Edw2w1 = rho * adadeltaState.Edw2w1 + (1 - rho) * dwW1 * dwW1;
+            adadeltaState.Edw2w2 = rho * adadeltaState.Edw2w2 + (1 - rho) * dwW2 * dwW2;
+            
+            const dist = Math.sqrt(adadeltaState.w1 * adadeltaState.w1 + adadeltaState.w2 * adadeltaState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            adadeltaState.w1 += dwW1 + (Math.random() - 0.5) * jitterFactor * 0.3;
+            adadeltaState.w2 += dwW2 + (Math.random() - 0.5) * jitterFactor * 0.5;
+            
+            const loss = lossFunction(adadeltaState.w1, adadeltaState.w2);
+            
+            adadeltaBall.position.set(adadeltaState.w1, loss + 0.15, adadeltaState.w2);
+            adadeltaBallGlow.position.copy(adadeltaBall.position);
+            
+            document.getElementById('adadelta-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                adadeltaPathPoints.push({ w1: adadeltaState.w1, w2: adadeltaState.w2, loss: loss });
+                if (adadeltaPathPoints.length > maxPathPoints) adadeltaPathPoints.shift();
+                
+                const positions = adadeltaPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < adadeltaPathPoints.length; i++) {
+                    positions[i * 3] = adadeltaPathPoints[i].w1;
+                    positions[i * 3 + 1] = adadeltaPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = adadeltaPathPoints[i].w2;
+                }
+                adadeltaPathLine.geometry.attributes.position.needsUpdate = true;
+                adadeltaPathLine.geometry.setDrawRange(0, adadeltaPathPoints.length);
+            }
+        }
+        
+        function updateRMSProp() {
+            const learningRate = 0.08;
+            const rho = 0.9;
+            const epsilon = 1e-8;
+            const noise = 0.05;
+            
+            const gradW1 = 2 * steepnessW1 * rmspropState.w1;
+            const gradW2 = 2 * steepnessW2 * rmspropState.w2;
+            
+            // Exponential moving average of squared gradients
+            // E[g²]_t = ρ * E[g²]_{t-1} + (1-ρ) * g_t²
+            rmspropState.Eg2w1 = rho * rmspropState.Eg2w1 + (1 - rho) * gradW1 * gradW1;
+            rmspropState.Eg2w2 = rho * rmspropState.Eg2w2 + (1 - rho) * gradW2 * gradW2;
+            
+            const dist = Math.sqrt(rmspropState.w1 * rmspropState.w1 + rmspropState.w2 * rmspropState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            // RMSProp update: w -= lr * g / √(E[g²] + ε)
+            rmspropState.w1 -= learningRate * gradW1 / (Math.sqrt(rmspropState.Eg2w1) + epsilon) + (Math.random() - 0.5) * jitterFactor * 0.3;
+            rmspropState.w2 -= learningRate * gradW2 / (Math.sqrt(rmspropState.Eg2w2) + epsilon) + (Math.random() - 0.5) * jitterFactor * 0.5;
+            
+            const loss = lossFunction(rmspropState.w1, rmspropState.w2);
+            
+            rmspropBall.position.set(rmspropState.w1, loss + 0.15, rmspropState.w2);
+            rmspropBallGlow.position.copy(rmspropBall.position);
+            
+            document.getElementById('rmsprop-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                rmspropPathPoints.push({ w1: rmspropState.w1, w2: rmspropState.w2, loss: loss });
+                if (rmspropPathPoints.length > maxPathPoints) rmspropPathPoints.shift();
+                
+                const positions = rmspropPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < rmspropPathPoints.length; i++) {
+                    positions[i * 3] = rmspropPathPoints[i].w1;
+                    positions[i * 3 + 1] = rmspropPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = rmspropPathPoints[i].w2;
+                }
+                rmspropPathLine.geometry.attributes.position.needsUpdate = true;
+                rmspropPathLine.geometry.setDrawRange(0, rmspropPathPoints.length);
+            }
+        }
+        
+        function updateMuon() {
+            const learningRate = 0.35;
+            const beta = 0.95;
+            const noise = 0.05;
+            
+            // Nesterov lookahead: compute gradient at the anticipated position
+            const phiW1 = muonState.w1 + beta * muonState.vw1;
+            const phiW2 = muonState.w2 + beta * muonState.vw2;
+            
+            const gradW1 = 2 * steepnessW1 * phiW1;
+            const gradW2 = 2 * steepnessW2 * phiW2;
+            
+            // Nesterov momentum in descent direction (negative gradient)
+            // v = β*v - grad  (accumulates in downhill direction)
+            muonState.vw1 = beta * muonState.vw1 - gradW1;
+            muonState.vw2 = beta * muonState.vw2 - gradW2;
+            
+            // Orthogonalize via polar decomposition (Newton-Schulz in real Muon).
+            // In 2D, this is just normalization — all singular values become 1,
+            // equalizing the update scale across steep vs shallow directions.
+            const norm = Math.sqrt(muonState.vw1 * muonState.vw1 + muonState.vw2 * muonState.vw2);
+            
+            const dist = Math.sqrt(muonState.w1 * muonState.w1 + muonState.w2 * muonState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            if (norm > 1e-8) {
+                const orthoW1 = muonState.vw1 / norm;
+                const orthoW2 = muonState.vw2 / norm;
+                // Scale step by gradient magnitude so the optimizer slows near the minimum
+                const gradNorm = Math.sqrt(gradW1 * gradW1 + gradW2 * gradW2);
+                muonState.w1 += learningRate * gradNorm * orthoW1 + (Math.random() - 0.5) * jitterFactor * 0.3;
+                muonState.w2 += learningRate * gradNorm * orthoW2 + (Math.random() - 0.5) * jitterFactor * 0.5;
+            }
+            
+            const loss = lossFunction(muonState.w1, muonState.w2);
+            
+            muonBall.position.set(muonState.w1, loss + 0.15, muonState.w2);
+            muonBallGlow.position.copy(muonBall.position);
+            
+            document.getElementById('muon-loss').textContent = loss.toFixed(4);
+            
+            if (time % 2 === 0) {
+                muonPathPoints.push({ w1: muonState.w1, w2: muonState.w2, loss: loss });
+                if (muonPathPoints.length > maxPathPoints) muonPathPoints.shift();
+                
+                const positions = muonPathLine.geometry.attributes.position.array;
+                for (let i = 0; i < muonPathPoints.length; i++) {
+                    positions[i * 3] = muonPathPoints[i].w1;
+                    positions[i * 3 + 1] = muonPathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = muonPathPoints[i].w2;
+                }
+                muonPathLine.geometry.attributes.position.needsUpdate = true;
+                muonPathLine.geometry.setDrawRange(0, muonPathPoints.length);
+            }
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            frameCounter++;
+            
+            if (frameCounter % updateInterval === 0) {
+                updateSGD();
+                updateMomentum();
+                updateNesterov();
+                updateAdaGrad();
+                updateAdam();
+                updateAdamW();
+                updateAdadelta();
+                updateRMSProp();
+                updateMuon();
+                time++;
+            }
+            
+            controls.update();
+            
+            // Subtle glow animation
+            const glowScale = 1 + Math.sin(Date.now() * 0.005) * 0.1;
+            sgdBallGlow.scale.setScalar(glowScale);
+            momentumBallGlow.scale.setScalar(glowScale);
+            nesterovBallGlow.scale.setScalar(glowScale);
+            adagradBallGlow.scale.setScalar(glowScale);
+            adamBallGlow.scale.setScalar(glowScale);
+            adamwBallGlow.scale.setScalar(glowScale);
+            adadeltaBallGlow.scale.setScalar(glowScale);
+            rmspropBallGlow.scale.setScalar(glowScale);
+            muonBallGlow.scale.setScalar(glowScale);
+            minGlow.scale.setScalar(glowScale);
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Initialize and start
+        initAnimation();
+        animate();
+        
+        // Restart every 16 seconds
+        setInterval(() => {
+            initAnimation();
+        }, 16000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SGD Optimization - 3D Loss Landscape</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        h1 {
+            color: #eee;
+            margin-bottom: 5px;
+            font-size: 24px;
+            position: absolute;
+            top: 20px;
+            z-index: 10;
+        }
+        .subtitle {
+            color: #888;
+            font-size: 14px;
+            position: absolute;
+            top: 55px;
+            z-index: 10;
+        }
+        .info {
+            position: absolute;
+            top: 90px;
+            left: 20px;
+            color: #fff;
+            font-size: 16px;
+            z-index: 10;
+        }
+        .info span {
+            color: #888;
+            font-size: 12px;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        .labels {
+            position: absolute;
+            bottom: 20px;
+            color: #aaa;
+            font-size: 14px;
+            z-index: 10;
+        }
+        .instructions {
+            position: absolute;
+            bottom: 50px;
+            color: #666;
+            font-size: 12px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <h1>SGD Optimization in Neural Networks</h1>
+    <p class="subtitle">Showing slow convergence in w₁ vs fast jittering in w₂</p>
+    <div class="info">
+        <div>Loss: <span id="loss-value">0.0000</span></div>
+        <span>(High curvature in w₂ causes oscillation)</span>
+    </div>
+    <div id="canvas-container"></div>
+    <p class="instructions">Drag to rotate | Scroll to zoom</p>
+    <p class="labels">w₁ (weight 1) | w₂ (weight 2) | Loss (height)</p>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <script>
+        // Scene setup
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+        
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(8, 6, 8);
+        camera.lookAt(0, 0, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+        
+        // Orbit controls for rotation
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 5;
+        controls.maxDistance = 20;
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 10, 5);
+        scene.add(directionalLight);
+        
+        const pointLight = new THREE.PointLight(0x6464ff, 0.5);
+        pointLight.position.set(-5, 5, -5);
+        scene.add(pointLight);
+        
+        // Loss function parameters - steep in w2, shallow in w1
+        const steepnessW1 = 0.05;   // Shallow in w1
+        const steepnessW2 = 0.8;    // Steep in w2
+        
+        // Create the loss surface (elongated bowl)
+        function lossFunction(w1, w2) {
+            return steepnessW1 * w1 * w1 + steepnessW2 * w2 * w2;
+        }
+        
+        // Create surface geometry
+        const surfaceSize = 6;
+        const surfaceResolution = 80;
+        const surfaceGeometry = new THREE.PlaneGeometry(
+            surfaceSize * 2, 
+            surfaceSize * 2, 
+            surfaceResolution, 
+            surfaceResolution
+        );
+        
+        // Modify vertices to create the bowl shape
+        const positions = surfaceGeometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const z = positions[i + 1];
+            positions[i + 2] = lossFunction(x, z);
+        }
+        surfaceGeometry.computeVertexNormals();
+        
+        // Create gradient material for the surface
+        const surfaceMaterial = new THREE.MeshPhongMaterial({
+            color: 0x4444aa,
+            shininess: 30,
+            transparent: true,
+            opacity: 0.7,
+            side: THREE.DoubleSide,
+            wireframe: false
+        });
+        
+        const surface = new THREE.Mesh(surfaceGeometry, surfaceMaterial);
+        surface.rotation.x = -Math.PI / 2;
+        scene.add(surface);
+        
+        // Add wireframe overlay
+        const wireframeMaterial = new THREE.MeshBasicMaterial({
+            color: 0x6666cc,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.3
+        });
+        const wireframe = new THREE.Mesh(surfaceGeometry.clone(), wireframeMaterial);
+        wireframe.rotation.x = -Math.PI / 2;
+        scene.add(wireframe);
+        
+        // Create contour lines on the surface
+        function createContourLines() {
+            const contourGroup = new THREE.Group();
+            const levels = [0.2, 0.5, 1, 2, 3, 4, 5];
+            
+            levels.forEach((level, idx) => {
+                const points = [];
+                const segments = 64;
+                
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    // For ellipse: steepnessW1 * w1^2 + steepnessW2 * w2^2 = level
+                    const w1 = Math.sqrt(level / steepnessW1) * Math.cos(angle);
+                    const w2 = Math.sqrt(level / steepnessW2) * Math.sin(angle);
+                    const y = level + 0.02;
+                    points.push(new THREE.Vector3(w1, y, w2));
+                }
+                
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineBasicMaterial({ 
+                    color: new THREE.Color().setHSL(0.6 - idx * 0.05, 0.7, 0.5),
+                    transparent: true,
+                    opacity: 0.6
+                });
+                const line = new THREE.Line(geometry, material);
+                contourGroup.add(line);
+            });
+            
+            return contourGroup;
+        }
+        
+        scene.add(createContourLines());
+        
+        // Create minimum point marker
+        const minGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const minMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
+        const minMarker = new THREE.Mesh(minGeometry, minMaterial);
+        minMarker.position.set(0, 0.05, 0);
+        scene.add(minMarker);
+        
+        // Add glow to minimum
+        const minGlowGeometry = new THREE.SphereGeometry(0.2, 16, 16);
+        const minGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x00ff88, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const minGlow = new THREE.Mesh(minGlowGeometry, minGlowMaterial);
+        minGlow.position.set(0, 0.05, 0);
+        scene.add(minGlow);
+        
+        // Create the ball
+        const ballGeometry = new THREE.SphereGeometry(0.15, 32, 32);
+        const ballMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0xff6644,
+            emissive: 0xff3311,
+            emissiveIntensity: 0.3,
+            shininess: 100
+        });
+        const ball = new THREE.Mesh(ballGeometry, ballMaterial);
+        scene.add(ball);
+        
+        // Ball glow
+        const ballGlowGeometry = new THREE.SphereGeometry(0.25, 16, 16);
+        const ballGlowMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff6644, 
+            transparent: true, 
+            opacity: 0.3 
+        });
+        const ballGlow = new THREE.Mesh(ballGlowGeometry, ballGlowMaterial);
+        scene.add(ballGlow);
+        
+        // Path trail
+        const maxPathPoints = 500;
+        const pathGeometry = new THREE.BufferGeometry();
+        const pathPositions = new Float32Array(maxPathPoints * 3);
+        pathGeometry.setAttribute('position', new THREE.BufferAttribute(pathPositions, 3));
+        const pathMaterial = new THREE.LineBasicMaterial({ 
+            color: 0xff6666,
+            transparent: true,
+            opacity: 0.8
+        });
+        const pathLine = new THREE.Line(pathGeometry, pathMaterial);
+        scene.add(pathLine);
+        
+        // Axes
+        function createAxes() {
+            const axesGroup = new THREE.Group();
+            
+            // W1 axis (X)
+            const w1Points = [new THREE.Vector3(-6, 0, 0), new THREE.Vector3(6, 0, 0)];
+            const w1Geometry = new THREE.BufferGeometry().setFromPoints(w1Points);
+            const w1Material = new THREE.LineBasicMaterial({ color: 0x888888 });
+            const w1Axis = new THREE.Line(w1Geometry, w1Material);
+            axesGroup.add(w1Axis);
+            
+            // W2 axis (Z)
+            const w2Points = [new THREE.Vector3(0, 0, -6), new THREE.Vector3(0, 0, 6)];
+            const w2Geometry = new THREE.BufferGeometry().setFromPoints(w2Points);
+            const w2Material = new THREE.LineBasicMaterial({ color: 0x888888 });
+            const w2Axis = new THREE.Line(w2Geometry, w2Material);
+            axesGroup.add(w2Axis);
+            
+            // Loss axis (Y)
+            const lossPoints = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 6, 0)];
+            const lossGeometry = new THREE.BufferGeometry().setFromPoints(lossPoints);
+            const lossMaterial = new THREE.LineBasicMaterial({ color: 0x888888 });
+            const lossAxis = new THREE.Line(lossGeometry, lossMaterial);
+            axesGroup.add(lossAxis);
+            
+            return axesGroup;
+        }
+        
+        scene.add(createAxes());
+        
+        // Animation state
+        let ballState = { w1: 0, w2: 0, vw1: 0, vw2: 0 };
+        let pathPoints = [];
+        let time = 0;
+        
+        function initAnimation() {
+            // Start position - far from minimum
+            ballState = {
+                w1: -4.5,
+                w2: 1.5,
+                vw1: 0,
+                vw2: 0
+            };
+            pathPoints = [];
+            time = 0;
+            
+            // Reset path geometry
+            const positions = pathLine.geometry.attributes.position.array;
+            for (let i = 0; i < positions.length; i++) {
+                positions[i] = 0;
+            }
+            pathLine.geometry.setDrawRange(0, 0);
+        }
+        
+        function updateBall() {
+            const learningRate = 0.15;
+            const momentum = 0.85;
+            const noise = 0.08;
+            
+            // Calculate gradients
+            const gradW1 = 2 * steepnessW1 * ballState.w1;
+            const gradW2 = 2 * steepnessW2 * ballState.w2;
+            
+            // Distance-based jitter (more jitter when far from minimum)
+            const dist = Math.sqrt(ballState.w1 * ballState.w1 + ballState.w2 * ballState.w2);
+            const jitterFactor = Math.min(1, dist / 3) * noise;
+            
+            // Update velocities with momentum and noise
+            // W1 moves slowly (shallow gradient), W2 jitters a lot (steep gradient)
+            ballState.vw1 = momentum * ballState.vw1 - learningRate * gradW1 + (Math.random() - 0.5) * jitterFactor * 0.3;
+            ballState.vw2 = momentum * ballState.vw2 - learningRate * gradW2 + (Math.random() - 0.5) * jitterFactor * 2;
+            
+            // Update positions
+            ballState.w1 += ballState.vw1;
+            ballState.w2 += ballState.vw2;
+            
+            // Calculate loss (height)
+            const loss = lossFunction(ballState.w1, ballState.w2);
+            
+            // Update ball position
+            ball.position.set(ballState.w1, loss + 0.15, ballState.w2);
+            ballGlow.position.copy(ball.position);
+            
+            // Update loss display
+            document.getElementById('loss-value').textContent = loss.toFixed(4);
+            
+            // Store path point
+            if (time % 2 === 0) {
+                pathPoints.push({ w1: ballState.w1, w2: ballState.w2, loss: loss });
+                if (pathPoints.length > maxPathPoints) pathPoints.shift();
+                
+                // Update path geometry
+                const positions = pathLine.geometry.attributes.position.array;
+                for (let i = 0; i < pathPoints.length; i++) {
+                    positions[i * 3] = pathPoints[i].w1;
+                    positions[i * 3 + 1] = pathPoints[i].loss + 0.05;
+                    positions[i * 3 + 2] = pathPoints[i].w2;
+                }
+                pathLine.geometry.attributes.position.needsUpdate = true;
+                pathLine.geometry.setDrawRange(0, pathPoints.length);
+            }
+            
+            time++;
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            updateBall();
+            controls.update();
+            
+            // Subtle glow animation
+            const glowScale = 1 + Math.sin(Date.now() * 0.005) * 0.1;
+            ballGlow.scale.setScalar(glowScale);
+            minGlow.scale.setScalar(glowScale);
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Initialize and start
+        initAnimation();
+        animate();
+        
+        // Restart every 5 seconds
+        setInterval(() => {
+            initAnimation();
+        }, 5000);
+    </script>
+</body>
+</html>
